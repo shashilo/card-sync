@@ -18,6 +18,16 @@ import "./styles.css";
 
 const WHATNOT_RE = /^https:\/\/([a-z0-9-]+\.)?whatnot\.com\//i;
 
+interface CropSnapshot {
+  dataUrl: string;
+  fingerprint: string;
+}
+
+interface ActiveScan {
+  signature: string;
+  fingerprint: string;
+}
+
 function App(): JSX.Element {
   const [settings, setSettings] = useState<ExtensionSettings>(DEFAULT_SETTINGS);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -43,7 +53,8 @@ function App(): JSX.Element {
   const showUrlRef = useRef("");
   const scanHistoryIdsRef = useRef(new Map<string, string>());
   const recentScanSignaturesRef = useRef(new Map<string, number>());
-  const activeScanSignaturesRef = useRef(new Map<string, string>());
+  const recentCardFingerprintsRef = useRef(new Map<string, number>());
+  const activeScansRef = useRef(new Map<string, ActiveScan>());
   const contextPrewarmRef = useRef(new Map<string, number>());
   const sessionCacheRef = useRef(new Map<string, Valuation>());
 
@@ -218,7 +229,8 @@ function App(): JSX.Element {
     setScanning(false);
     setTracks([]);
     tracksRef.current = [];
-    activeScanSignaturesRef.current.clear();
+    recentCardFingerprintsRef.current.clear();
+    activeScansRef.current.clear();
     if (targetTabId) {
       sendToTab(targetTabId, { type: "CS_SET_SCANNING", scanning: false }).catch(() => undefined);
       sendToTab(targetTabId, { type: "CS_CLEAR_OVERLAY" }).catch(() => undefined);
@@ -276,7 +288,6 @@ function App(): JSX.Element {
     for (const track of currentTracks) {
       const stableFor = now - (track.stableSince ?? track.firstSeenAt);
       const visibleFor = now - track.firstSeenAt;
-      const recentlyRequested = track.identifyRequestedAt && now - track.identifyRequestedAt < 7000;
       const veryRecentlyRequested = track.identifyRequestedAt && now - track.identifyRequestedAt < 900;
       const readyForFastAttempt =
         stableFor >= settingsRef.current.identifyStableAfterMs ||
@@ -296,16 +307,17 @@ function App(): JSX.Element {
 
       const contextIdentity = inferIdentityFromContext(contextRef.current);
       const signature = scanSignature(contextIdentity, track, crop);
-      const activeSignature = activeScanSignaturesRef.current.get(track.id);
-      const alreadyUseful = track.identity && track.valuation?.source && track.valuation.source !== "none" && activeSignature === signature;
-      if (alreadyUseful) continue;
-      if ((track.inFlight || recentlyRequested) && activeSignature === signature) continue;
+      const activeScan = activeScansRef.current.get(track.id);
+      const sameActiveCard = Boolean(activeScan && sameCardFingerprint(activeScan.fingerprint, crop.fingerprint));
+      if (sameActiveCard) continue;
+      if (hasRecentCardFingerprint(recentCardFingerprintsRef.current, crop.fingerprint, now)) continue;
       if (hasRecentScanSignature(recentScanSignaturesRef.current, signature, now)) {
         continue;
       }
 
       rememberScanSignature(recentScanSignaturesRef.current, signature, now);
-      activeScanSignaturesRef.current.set(track.id, signature);
+      rememberCardFingerprint(recentCardFingerprintsRef.current, crop.fingerprint, now);
+      activeScansRef.current.set(track.id, { signature, fingerprint: crop.fingerprint });
       markTrack(track.id, { inFlight: true, identifyRequestedAt: now, stage: "candidate" });
       const contextValuation = buildValuation(
         contextIdentity,
@@ -321,13 +333,13 @@ function App(): JSX.Element {
         stage: contextStage,
         updatedAt: Date.now()
       });
-      persistTrackHistory(track, crop, {
+      persistTrackHistory(track, crop.dataUrl, {
         identity: contextIdentity,
         valuation: contextValuation,
         compLinks: generateCompLinks(contextIdentity),
         stage: contextStage
       }, signature).catch(() => undefined);
-      applyPriceGuide(track.id, track, crop, contextIdentity, signature).catch(() => undefined);
+      applyPriceGuide(track.id, track, crop.dataUrl, contextIdentity, signature).catch(() => undefined);
 
       const provider = settingsRef.current.provider;
       if (provider.provider === "mock" || !provider.apiKey.trim()) {
@@ -336,7 +348,7 @@ function App(): JSX.Element {
       }
 
       if (slabLabelCrop) {
-        identifySlabLabel(slabLabelCrop, contextRef.current, settingsRef.current)
+        identifySlabLabel(slabLabelCrop.dataUrl, contextRef.current, settingsRef.current)
           .then(({ identity, estimate }) => {
             if (!isCurrentScan(track.id, signature)) return;
             if (identity.confidence < 0.5) return;
@@ -357,18 +369,18 @@ function App(): JSX.Element {
               inFlight: true,
               updatedAt: Date.now()
             });
-            persistTrackHistory(track, crop, {
+            persistTrackHistory(track, crop.dataUrl, {
               identity,
               valuation,
               compLinks,
               stage
             }, signature).catch(() => undefined);
-            applyPriceGuide(track.id, track, crop, identity, signature).catch(() => undefined);
+            applyPriceGuide(track.id, track, crop.dataUrl, identity, signature).catch(() => undefined);
           })
           .catch(() => undefined);
       }
 
-      identifyCard(crop, contextRef.current, settingsRef.current)
+      identifyCard(crop.dataUrl, contextRef.current, settingsRef.current)
         .then(({ identity, estimate }) => {
           if (!isCurrentScan(track.id, signature)) return;
           const valuation = buildValuation(
@@ -388,13 +400,13 @@ function App(): JSX.Element {
             inFlight: false,
             updatedAt: Date.now()
           });
-          persistTrackHistory(track, crop, {
+          persistTrackHistory(track, crop.dataUrl, {
             identity,
             valuation,
             compLinks,
             stage
           }, signature).catch(() => undefined);
-          applyPriceGuide(track.id, track, crop, identity, signature).catch(() => undefined);
+          applyPriceGuide(track.id, track, crop.dataUrl, identity, signature).catch(() => undefined);
         })
         .catch((caught) => {
           if (!isCurrentScan(track.id, signature)) return;
@@ -408,7 +420,7 @@ function App(): JSX.Element {
   }
 
   function isCurrentScan(trackId: string, signature: string): boolean {
-    return activeScanSignaturesRef.current.get(trackId) === signature;
+    return activeScansRef.current.get(trackId)?.signature === signature;
   }
 
   async function applyPriceGuide(trackId: string, track: TrackedCard, crop: string, identity: CardIdentity, signature?: string): Promise<void> {
@@ -497,7 +509,8 @@ function App(): JSX.Element {
     if (showKeyRef.current !== showKey) {
       scanHistoryIdsRef.current.clear();
       recentScanSignaturesRef.current.clear();
-      activeScanSignaturesRef.current.clear();
+      recentCardFingerprintsRef.current.clear();
+      activeScansRef.current.clear();
       contextPrewarmRef.current.clear();
     }
     showKeyRef.current = showKey;
@@ -513,7 +526,7 @@ function App(): JSX.Element {
     signature?: string
   ): Promise<void> {
     const showKey = showKeyRef.current;
-    const historyKey = signature ?? activeScanSignaturesRef.current.get(track.id) ?? track.id;
+    const historyKey = signature ?? activeScansRef.current.get(track.id)?.signature ?? track.id;
     if (!showKey || (!cropImageDataUrl && !scanHistoryIdsRef.current.has(historyKey))) return;
 
     const existingId = scanHistoryIdsRef.current.get(historyKey);
@@ -579,7 +592,7 @@ function App(): JSX.Element {
     video: HTMLVideoElement,
     track: TrackedCard,
     options: { yRatio?: number; heightRatio?: number; maxSide?: number; quality?: number } = {}
-  ): string | undefined {
+  ): CropSnapshot | undefined {
     const canvas = cropCanvasRef.current;
     const viewport = contextRef.current?.videoViewport;
     if (!canvas || !viewport?.viewportWidth || !viewport.viewportHeight) return undefined;
@@ -606,7 +619,10 @@ function App(): JSX.Element {
     const ctx = canvas.getContext("2d");
     if (!ctx) return undefined;
     ctx.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL("image/jpeg", options.quality ?? 0.72);
+    return {
+      dataUrl: canvas.toDataURL("image/jpeg", options.quality ?? 0.72),
+      fingerprint: fingerprintCanvas(ctx, canvas.width, canvas.height)
+    };
   }
 
   return (
@@ -683,14 +699,42 @@ function badgeToneForStage(stage: TrackedCard["stage"], confidence: number, valu
   return confidence < 0.5 ? "red" : "gray";
 }
 
-function scanSignature(identity: CardIdentity, track: TrackedCard, cropImageDataUrl: string): string {
+function scanSignature(identity: CardIdentity, track: TrackedCard, crop: CropSnapshot): string {
   const key = identityKey(identity);
   return [
     key && identity.confidence >= 0.5 ? `identity:${key}` : `raw:${hashString(identity.rawText)}`,
-    `crop:${hashString(cropImageDataUrl)}`,
+    `visual:${crop.fingerprint}`,
     Math.round(track.box.width / 25),
     Math.round(track.box.height / 25)
   ].join("|");
+}
+
+function sameCardFingerprint(a: string, b: string): boolean {
+  return hammingDistance(a, b) <= 10;
+}
+
+function hammingDistance(a: string, b: string): number {
+  const length = Math.min(a.length, b.length);
+  let distance = Math.abs(a.length - b.length);
+  for (let index = 0; index < length; index += 1) {
+    if (a[index] !== b[index]) distance += 1;
+  }
+  return distance;
+}
+
+function fingerprintCanvas(ctx: CanvasRenderingContext2D, width: number, height: number): string {
+  const sampleSize = 8;
+  const values: number[] = [];
+  for (let y = 0; y < sampleSize; y += 1) {
+    for (let x = 0; x < sampleSize; x += 1) {
+      const sx = Math.min(width - 1, Math.floor(((x + 0.5) / sampleSize) * width));
+      const sy = Math.min(height - 1, Math.floor(((y + 0.5) / sampleSize) * height));
+      const pixel = ctx.getImageData(sx, sy, 1, 1).data;
+      values.push(pixel[0] * 0.299 + pixel[1] * 0.587 + pixel[2] * 0.114);
+    }
+  }
+  const average = values.reduce((sum, value) => sum + value, 0) / values.length;
+  return values.map((value) => (value >= average ? "1" : "0")).join("");
 }
 
 function hashString(value: string): string {
@@ -711,6 +755,21 @@ function rememberScanSignature(signatures: Map<string, number>, signature: strin
   signatures.set(signature, now);
   for (const [key, seenAt] of signatures) {
     if (now - seenAt > 15_000) signatures.delete(key);
+  }
+}
+
+function hasRecentCardFingerprint(fingerprints: Map<string, number>, fingerprint: string, now: number): boolean {
+  for (const [existing, seenAt] of fingerprints) {
+    if (now - seenAt <= 12_000 && sameCardFingerprint(existing, fingerprint)) return true;
+  }
+  return false;
+}
+
+function rememberCardFingerprint(fingerprints: Map<string, number>, fingerprint: string, now: number): void {
+  if (!fingerprint) return;
+  fingerprints.set(fingerprint, now);
+  for (const [key, seenAt] of fingerprints) {
+    if (now - seenAt > 20_000) fingerprints.delete(key);
   }
 }
 
