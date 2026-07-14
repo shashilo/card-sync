@@ -70,17 +70,6 @@ function nonMaxSuppress(candidates: DetectionBox[], limit: number): DetectionBox
   return picked;
 }
 
-function centerFocus(bounds: { x: number; y: number; width: number; height: number }): { x: number; y: number; width: number; height: number } {
-  const width = bounds.width * 0.76;
-  const height = bounds.height * 0.86;
-  return {
-    x: bounds.x + (bounds.width - width) / 2,
-    y: bounds.y + (bounds.height - height) / 2,
-    width,
-    height
-  };
-}
-
 function centerBonus(
   box: { x: number; y: number; width: number; height: number },
   bounds: { x: number; y: number; width: number; height: number }
@@ -175,7 +164,7 @@ export function detectCardBoxes(
   const candidates: DetectionBox[] = [];
   const outputScaleX = viewportWidth / analysisWidth;
   const outputScaleY = viewportHeight / analysisHeight;
-  const searchBounds = centerFocus(bounds);
+  const searchBounds = bounds;
   const minHeight = clamp(searchBounds.height * 0.3, 62, searchBounds.height);
   const maxHeight = clamp(searchBounds.height * 0.92, minHeight, searchBounds.height);
   const aspectRatios = [0.56, 0.63, 0.72, 0.78];
@@ -225,5 +214,5 @@ export function detectCardBoxes(
   }
 
   const picked = nonMaxSuppress(candidates, maxBoxes);
-  return picked.length ? picked : [centerFallback(searchBounds, outputScaleX, outputScaleY)];
+  return picked.length ? picked : [centerFallback(bounds, outputScaleX, outputScaleY)];
 }
