@@ -47,12 +47,22 @@ function iou(a: DetectionBox, b: DetectionBox): number {
   return union > 0 ? intersection / union : 0;
 }
 
+function containedOverlap(a: DetectionBox, b: DetectionBox): number {
+  const x1 = Math.max(a.x, b.x);
+  const y1 = Math.max(a.y, b.y);
+  const x2 = Math.min(a.x + a.width, b.x + b.width);
+  const y2 = Math.min(a.y + a.height, b.y + b.height);
+  const intersection = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+  const smallerArea = Math.min(a.width * a.height, b.width * b.height);
+  return smallerArea > 0 ? intersection / smallerArea : 0;
+}
+
 function nonMaxSuppress(candidates: DetectionBox[], limit: number): DetectionBox[] {
   const sorted = candidates.sort((a, b) => b.confidence - a.confidence);
   const picked: DetectionBox[] = [];
 
   for (const candidate of sorted) {
-    if (picked.some((existing) => iou(existing, candidate) > 0.34)) continue;
+    if (picked.some((existing) => iou(existing, candidate) > 0.18 || containedOverlap(existing, candidate) > 0.52)) continue;
     picked.push(candidate);
     if (picked.length >= limit) break;
   }

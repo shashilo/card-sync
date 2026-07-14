@@ -12,7 +12,7 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   },
   scanCadenceMs: 350,
   identifyStableAfterMs: 900,
-  maxTrackedCards: 3,
+  maxTrackedCards: 1,
   allowAiEstimatedValues: true
 };
 
@@ -22,7 +22,8 @@ export async function loadSettings(): Promise<ExtensionSettings> {
   return {
     ...DEFAULT_SETTINGS,
     ...saved,
-    provider: normalizeProviderSettings(saved?.provider)
+    provider: normalizeProviderSettings(saved?.provider),
+    maxTrackedCards: DEFAULT_SETTINGS.maxTrackedCards
   };
 }
 
