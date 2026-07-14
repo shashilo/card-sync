@@ -41,7 +41,7 @@ function App(): JSX.Element {
   const scanRunRef = useRef(0);
   const showKeyRef = useRef<string | undefined>();
   const showUrlRef = useRef("");
-  const trackHistoryIdsRef = useRef(new Map<string, string>());
+  const scanHistoryIdsRef = useRef(new Map<string, string>());
   const recentScanSignaturesRef = useRef(new Map<string, number>());
   const activeScanSignaturesRef = useRef(new Map<string, string>());
   const contextPrewarmRef = useRef(new Map<string, number>());
@@ -326,7 +326,7 @@ function App(): JSX.Element {
         valuation: contextValuation,
         compLinks: generateCompLinks(contextIdentity),
         stage: contextStage
-      }).catch(() => undefined);
+      }, signature).catch(() => undefined);
       applyPriceGuide(track.id, track, crop, contextIdentity, signature).catch(() => undefined);
 
       const provider = settingsRef.current.provider;
@@ -362,7 +362,7 @@ function App(): JSX.Element {
               valuation,
               compLinks,
               stage
-            }).catch(() => undefined);
+            }, signature).catch(() => undefined);
             applyPriceGuide(track.id, track, crop, identity, signature).catch(() => undefined);
           })
           .catch(() => undefined);
@@ -393,7 +393,7 @@ function App(): JSX.Element {
             valuation,
             compLinks,
             stage
-          }).catch(() => undefined);
+          }, signature).catch(() => undefined);
           applyPriceGuide(track.id, track, crop, identity, signature).catch(() => undefined);
         })
         .catch((caught) => {
@@ -414,7 +414,10 @@ function App(): JSX.Element {
   async function applyPriceGuide(trackId: string, track: TrackedCard, crop: string, identity: CardIdentity, signature?: string): Promise<void> {
     const quote = await lookupPriceGuide(identity, settingsRef.current.priceGuideProxyUrl);
     if (signature && !isCurrentScan(trackId, signature)) return;
-    if (!quote) return;
+    if (!quote) {
+      markTrack(trackId, { inFlight: false, updatedAt: Date.now() });
+      return;
+    }
 
     const valuation = buildValuation(identity, sessionCacheRef.current, undefined, settingsRef.current.allowAiEstimatedValues, quote);
     const compLinks = generateCompLinks(identity);
@@ -433,7 +436,7 @@ function App(): JSX.Element {
       valuation,
       compLinks,
       stage
-    });
+    }, signature);
   }
 
   async function requestPageContext(tabId: number): Promise<void> {
@@ -492,7 +495,7 @@ function App(): JSX.Element {
   async function loadHistoryForShow(showUrl: string): Promise<void> {
     const showKey = showKeyFromUrl(showUrl);
     if (showKeyRef.current !== showKey) {
-      trackHistoryIdsRef.current.clear();
+      scanHistoryIdsRef.current.clear();
       recentScanSignaturesRef.current.clear();
       activeScanSignaturesRef.current.clear();
       contextPrewarmRef.current.clear();
@@ -506,14 +509,16 @@ function App(): JSX.Element {
   async function persistTrackHistory(
     track: TrackedCard,
     cropImageDataUrl: string | undefined,
-    patch: Pick<TrackedCard, "identity" | "valuation" | "compLinks" | "stage">
+    patch: Pick<TrackedCard, "identity" | "valuation" | "compLinks" | "stage">,
+    signature?: string
   ): Promise<void> {
     const showKey = showKeyRef.current;
-    if (!showKey || (!cropImageDataUrl && !trackHistoryIdsRef.current.has(track.id))) return;
+    const historyKey = signature ?? activeScanSignaturesRef.current.get(track.id) ?? track.id;
+    if (!showKey || (!cropImageDataUrl && !scanHistoryIdsRef.current.has(historyKey))) return;
 
-    const existingId = trackHistoryIdsRef.current.get(track.id);
+    const existingId = scanHistoryIdsRef.current.get(historyKey);
     const id = existingId ?? crypto.randomUUID();
-    trackHistoryIdsRef.current.set(track.id, id);
+    scanHistoryIdsRef.current.set(historyKey, id);
     const item = await upsertScanHistoryItem({
       id,
       showKey,
@@ -541,7 +546,7 @@ function App(): JSX.Element {
     const showKey = showKeyRef.current;
     if (!showKey) return;
     await clearShowHistory(showKey);
-    trackHistoryIdsRef.current.clear();
+    scanHistoryIdsRef.current.clear();
     setHistoryItems([]);
   }
 

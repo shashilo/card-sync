@@ -17,7 +17,8 @@ export async function lookupPriceGuide(identity: CardIdentity, proxyUrl: string)
     headers: {
       "content-type": "application/json"
     },
-    body: JSON.stringify({ identity, query })
+    body: JSON.stringify({ identity, query }),
+    signal: AbortSignal.timeout(1600)
   })
     .then(async (response) => {
       const body = (await response.json().catch(() => undefined)) as PriceGuideLookupResponse | undefined;
