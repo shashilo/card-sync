@@ -42,8 +42,8 @@ function App(): JSX.Element {
   const showKeyRef = useRef<string | undefined>();
   const showUrlRef = useRef("");
   const trackHistoryIdsRef = useRef(new Map<string, string>());
-  const scannedTrackIdsRef = useRef(new Set<string>());
   const recentScanSignaturesRef = useRef(new Map<string, number>());
+  const activeScanSignaturesRef = useRef(new Map<string, string>());
   const contextPrewarmRef = useRef(new Map<string, number>());
   const sessionCacheRef = useRef(new Map<string, Valuation>());
 
@@ -218,7 +218,7 @@ function App(): JSX.Element {
     setScanning(false);
     setTracks([]);
     tracksRef.current = [];
-    scannedTrackIdsRef.current.clear();
+    activeScanSignaturesRef.current.clear();
     if (targetTabId) {
       sendToTab(targetTabId, { type: "CS_SET_SCANNING", scanning: false }).catch(() => undefined);
       sendToTab(targetTabId, { type: "CS_CLEAR_OVERLAY" }).catch(() => undefined);
@@ -276,15 +276,14 @@ function App(): JSX.Element {
     for (const track of currentTracks) {
       const stableFor = now - (track.stableSince ?? track.firstSeenAt);
       const visibleFor = now - track.firstSeenAt;
-      const alreadyUseful = track.identity && track.valuation?.source && track.valuation.source !== "none";
       const recentlyRequested = track.identifyRequestedAt && now - track.identifyRequestedAt < 7000;
-      const alreadyScanned = scannedTrackIdsRef.current.has(track.id);
+      const veryRecentlyRequested = track.identifyRequestedAt && now - track.identifyRequestedAt < 900;
       const readyForFastAttempt =
         stableFor >= settingsRef.current.identifyStableAfterMs ||
         visibleFor >= 450 ||
         track.detectionConfidence >= 0.34;
 
-      if (alreadyUseful || alreadyScanned || track.inFlight || recentlyRequested || !readyForFastAttempt) continue;
+      if (!readyForFastAttempt || veryRecentlyRequested) continue;
 
       const crop = cropTrack(video, track);
       if (!crop) continue;
@@ -297,13 +296,16 @@ function App(): JSX.Element {
 
       const contextIdentity = inferIdentityFromContext(contextRef.current);
       const signature = scanSignature(contextIdentity, track, crop);
+      const activeSignature = activeScanSignaturesRef.current.get(track.id);
+      const alreadyUseful = track.identity && track.valuation?.source && track.valuation.source !== "none" && activeSignature === signature;
+      if (alreadyUseful) continue;
+      if ((track.inFlight || recentlyRequested) && activeSignature === signature) continue;
       if (hasRecentScanSignature(recentScanSignaturesRef.current, signature, now)) {
-        scannedTrackIdsRef.current.add(track.id);
         continue;
       }
 
       rememberScanSignature(recentScanSignaturesRef.current, signature, now);
-      scannedTrackIdsRef.current.add(track.id);
+      activeScanSignaturesRef.current.set(track.id, signature);
       markTrack(track.id, { inFlight: true, identifyRequestedAt: now, stage: "candidate" });
       const contextValuation = buildValuation(
         contextIdentity,
@@ -325,7 +327,7 @@ function App(): JSX.Element {
         compLinks: generateCompLinks(contextIdentity),
         stage: contextStage
       }).catch(() => undefined);
-      applyPriceGuide(track.id, track, crop, contextIdentity).catch(() => undefined);
+      applyPriceGuide(track.id, track, crop, contextIdentity, signature).catch(() => undefined);
 
       const provider = settingsRef.current.provider;
       if (provider.provider === "mock" || !provider.apiKey.trim()) {
@@ -336,6 +338,7 @@ function App(): JSX.Element {
       if (slabLabelCrop) {
         identifySlabLabel(slabLabelCrop, contextRef.current, settingsRef.current)
           .then(({ identity, estimate }) => {
+            if (!isCurrentScan(track.id, signature)) return;
             if (identity.confidence < 0.5) return;
             const valuation = buildValuation(
               identity,
@@ -360,13 +363,14 @@ function App(): JSX.Element {
               compLinks,
               stage
             }).catch(() => undefined);
-            applyPriceGuide(track.id, track, crop, identity).catch(() => undefined);
+            applyPriceGuide(track.id, track, crop, identity, signature).catch(() => undefined);
           })
           .catch(() => undefined);
       }
 
       identifyCard(crop, contextRef.current, settingsRef.current)
         .then(({ identity, estimate }) => {
+          if (!isCurrentScan(track.id, signature)) return;
           const valuation = buildValuation(
             identity,
             sessionCacheRef.current,
@@ -390,9 +394,10 @@ function App(): JSX.Element {
             compLinks,
             stage
           }).catch(() => undefined);
-          applyPriceGuide(track.id, track, crop, identity).catch(() => undefined);
+          applyPriceGuide(track.id, track, crop, identity, signature).catch(() => undefined);
         })
         .catch((caught) => {
+          if (!isCurrentScan(track.id, signature)) return;
           markTrack(track.id, {
             inFlight: false,
             stage: "error",
@@ -402,8 +407,13 @@ function App(): JSX.Element {
     }
   }
 
-  async function applyPriceGuide(trackId: string, track: TrackedCard, crop: string, identity: CardIdentity): Promise<void> {
+  function isCurrentScan(trackId: string, signature: string): boolean {
+    return activeScanSignaturesRef.current.get(trackId) === signature;
+  }
+
+  async function applyPriceGuide(trackId: string, track: TrackedCard, crop: string, identity: CardIdentity, signature?: string): Promise<void> {
     const quote = await lookupPriceGuide(identity, settingsRef.current.priceGuideProxyUrl);
+    if (signature && !isCurrentScan(trackId, signature)) return;
     if (!quote) return;
 
     const valuation = buildValuation(identity, sessionCacheRef.current, undefined, settingsRef.current.allowAiEstimatedValues, quote);
@@ -483,8 +493,8 @@ function App(): JSX.Element {
     const showKey = showKeyFromUrl(showUrl);
     if (showKeyRef.current !== showKey) {
       trackHistoryIdsRef.current.clear();
-      scannedTrackIdsRef.current.clear();
       recentScanSignaturesRef.current.clear();
+      activeScanSignaturesRef.current.clear();
       contextPrewarmRef.current.clear();
     }
     showKeyRef.current = showKey;
@@ -670,8 +680,8 @@ function badgeToneForStage(stage: TrackedCard["stage"], confidence: number, valu
 
 function scanSignature(identity: CardIdentity, track: TrackedCard, cropImageDataUrl: string): string {
   const key = identityKey(identity);
-  if (key && identity.confidence >= 0.5) return `identity:${key}`;
   return [
+    key && identity.confidence >= 0.5 ? `identity:${key}` : `raw:${hashString(identity.rawText)}`,
     `crop:${hashString(cropImageDataUrl)}`,
     Math.round(track.box.width / 25),
     Math.round(track.box.height / 25)
@@ -688,14 +698,14 @@ function hashString(value: string): string {
 
 function hasRecentScanSignature(signatures: Map<string, number>, signature: string, now: number): boolean {
   const lastSeenAt = signature ? signatures.get(signature) : undefined;
-  return Boolean(lastSeenAt && now - lastSeenAt < 45_000);
+  return Boolean(lastSeenAt && now - lastSeenAt < 2_500);
 }
 
 function rememberScanSignature(signatures: Map<string, number>, signature: string, now: number): void {
   if (!signature) return;
   signatures.set(signature, now);
   for (const [key, seenAt] of signatures) {
-    if (now - seenAt > 90_000) signatures.delete(key);
+    if (now - seenAt > 15_000) signatures.delete(key);
   }
 }
 

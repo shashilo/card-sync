@@ -38,10 +38,16 @@ async function identifyImage(
   }
 
   if (provider.provider === "anthropic") {
-    return identifyWithAnthropic(imageDataUrl, context, provider, fallback, mode);
+    return identifyWithAnthropic(imageDataUrl, context, provider, fallback, mode).catch((caught) => {
+      if (isAbortError(caught)) return { identity: fallback };
+      throw caught;
+    });
   }
 
-  return identifyWithOpenAiCompatible(imageDataUrl, context, provider, fallback, mode);
+  return identifyWithOpenAiCompatible(imageDataUrl, context, provider, fallback, mode).catch((caught) => {
+    if (isAbortError(caught)) return { identity: fallback };
+    throw caught;
+  });
 }
 
 async function identifyWithOpenAiCompatible(
@@ -83,7 +89,8 @@ async function identifyWithOpenAiCompatible(
   const response = await fetch(`${provider.baseUrl.replace(/\/$/, "")}/chat/completions`, {
     method: "POST",
     headers,
-    body: JSON.stringify(body)
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(timeoutForMode(mode))
   });
 
   if (!response.ok) {
@@ -135,7 +142,8 @@ async function identifyWithAnthropic(
           ]
         }
       ]
-    })
+    }),
+    signal: AbortSignal.timeout(timeoutForMode(mode))
   });
 
   if (!response.ok) {
@@ -217,6 +225,14 @@ function providerLabel(provider: ProviderSettings): string {
   if (provider.provider === "anthropic") return "Anthropic";
   if (provider.provider === "custom-openai-compatible") return "Custom provider";
   return "AI provider";
+}
+
+function timeoutForMode(mode: IdentifyMode): number {
+  return mode === "slab-label" ? 1800 : 3200;
+}
+
+function isAbortError(value: unknown): boolean {
+  return value instanceof DOMException && (value.name === "TimeoutError" || value.name === "AbortError");
 }
 
 function coerceEstimate(value: unknown): AiValueEstimate | undefined {
