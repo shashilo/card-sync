@@ -1,9 +1,18 @@
-import type { DetectionBox, VideoViewport } from "../../shared/types";
+import type { Box, DetectionBox, VideoViewport } from "../../shared/types";
 
 interface IntegralImage {
   data: Float32Array;
   stride: number;
 }
+
+export interface DetectionScanPlan {
+  searchBounds: Box;
+  minHeight: number;
+  maxHeight: number;
+  aspectRatios: number[];
+}
+
+const CARD_ASPECT_RATIOS = [0.56, 0.63, 0.72, 0.78, 1, 1.25, 1.4, 1.6, 1.78];
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -83,6 +92,24 @@ function centerBonus(
   return clamp(1 - Math.hypot(nx, ny), 0, 1);
 }
 
+export function buildDetectionScanPlan(analysisWidth: number, analysisHeight: number): DetectionScanPlan {
+  const searchBounds = {
+    x: 0,
+    y: 0,
+    width: analysisWidth,
+    height: analysisHeight
+  };
+  const minHeight = clamp(searchBounds.height * 0.18, 44, searchBounds.height);
+  const maxHeight = clamp(searchBounds.height * 0.96, minHeight, searchBounds.height);
+
+  return {
+    searchBounds,
+    minHeight,
+    maxHeight,
+    aspectRatios: CARD_ASPECT_RATIOS
+  };
+}
+
 export function detectCardBoxes(
   video: HTMLVideoElement,
   canvas: HTMLCanvasElement,
@@ -126,34 +153,16 @@ export function detectCardBoxes(
   const brightnessIntegral = buildIntegral(brightness, analysisWidth, analysisHeight);
   const viewportWidth = viewport?.viewportWidth || frameWidth;
   const viewportHeight = viewport?.viewportHeight || frameHeight;
-  const videoRect = viewport?.videoRect;
-  const rawBounds = videoRect
-    ? {
-        x: clamp((videoRect.x / viewportWidth) * analysisWidth, 0, analysisWidth - 1),
-        y: clamp((videoRect.y / viewportHeight) * analysisHeight, 0, analysisHeight - 1),
-        width: (videoRect.width / viewportWidth) * analysisWidth,
-        height: (videoRect.height / viewportHeight) * analysisHeight
-      }
-    : { x: 0, y: 0, width: analysisWidth, height: analysisHeight };
-  const bounds = {
-    x: rawBounds.x,
-    y: rawBounds.y,
-    width: clamp(rawBounds.width, 1, analysisWidth - rawBounds.x),
-    height: clamp(rawBounds.height, 1, analysisHeight - rawBounds.y)
-  };
 
   const candidates: DetectionBox[] = [];
   const outputScaleX = viewportWidth / analysisWidth;
   const outputScaleY = viewportHeight / analysisHeight;
-  const searchBounds = bounds;
-  const minHeight = clamp(searchBounds.height * 0.3, 62, searchBounds.height);
-  const maxHeight = clamp(searchBounds.height * 0.92, minHeight, searchBounds.height);
-  const aspectRatios = [0.56, 0.63, 0.72, 0.78];
+  const { searchBounds, minHeight, maxHeight, aspectRatios } = buildDetectionScanPlan(analysisWidth, analysisHeight);
 
   for (let h = minHeight; h <= maxHeight; h += Math.max(14, h * 0.16)) {
     for (const ratio of aspectRatios) {
       const w = h * ratio;
-      if (w > searchBounds.width * 0.9) continue;
+      if (w > searchBounds.width * 0.98) continue;
       const step = Math.max(10, Math.round(Math.min(w, h) * 0.18));
 
       for (let y = searchBounds.y; y <= searchBounds.y + searchBounds.height - h; y += step) {
