@@ -44,6 +44,7 @@ function App(): JSX.Element {
   const trackHistoryIdsRef = useRef(new Map<string, string>());
   const scannedTrackIdsRef = useRef(new Set<string>());
   const recentScanSignaturesRef = useRef(new Map<string, number>());
+  const contextPrewarmRef = useRef(new Map<string, number>());
   const sessionCacheRef = useRef(new Map<string, Valuation>());
 
   useEffect(() => {
@@ -71,7 +72,10 @@ function App(): JSX.Element {
 
   useEffect(() => {
     const listener = (message: RuntimeMessage) => {
-      if (message.type === "CS_CONTEXT") setContext(message.context);
+      if (message.type === "CS_CONTEXT") {
+        setContext(message.context);
+        prewarmPriceGuideFromContext(message.context).catch(() => undefined);
+      }
       if (message.type === "BG_CAPTURE_READY") startFromPendingCapture(message.capture);
       if (message.type === "BG_CAPTURE_ERROR") setError(message.message);
     };
@@ -241,7 +245,7 @@ function App(): JSX.Element {
     const now = Date.now();
     const currentSettings = settingsRef.current;
     const targetTabId = captureTabIdRef.current;
-    if (targetTabId && now - lastContextPullAtRef.current > 900) {
+    if (targetTabId && now - lastContextPullAtRef.current > 500) {
       lastContextPullAtRef.current = now;
       requestPageContext(targetTabId).catch(() => undefined);
     }
@@ -384,6 +388,52 @@ function App(): JSX.Element {
     if (!isPageContext(response)) return;
     contextRef.current = response;
     setContext(response);
+    prewarmPriceGuideFromContext(response).catch(() => undefined);
+  }
+
+  async function prewarmPriceGuideFromContext(pageContext: PageContext): Promise<void> {
+    const identity = inferIdentityFromContext(pageContext);
+    const key = identityKey(identity) || hashString(identity.rawText);
+    if (!key || identity.confidence < 0.5) return;
+
+    const now = Date.now();
+    const recent = contextPrewarmRef.current.get(key);
+    if (recent && now - recent < 20_000) return;
+    contextPrewarmRef.current.set(key, now);
+
+    const quote = await lookupPriceGuide(identity, settingsRef.current.priceGuideProxyUrl);
+    if (!quote) return;
+
+    const valuation = buildValuation(identity, sessionCacheRef.current, undefined, settingsRef.current.allowAiEstimatedValues, quote);
+    rememberValuation(identity, valuation, sessionCacheRef.current);
+    applyPrewarmedValuationToCurrentTracks(identity, valuation);
+  }
+
+  function applyPrewarmedValuationToCurrentTracks(identity: CardIdentity, valuation: Valuation): void {
+    const key = identityKey(identity);
+    if (!key || valuation.source === "none") return;
+
+    for (const track of tracksRef.current) {
+      const trackIdentity = track.identity ?? inferIdentityFromContext(contextRef.current);
+      if (identityKey(trackIdentity) !== key) continue;
+
+      const compLinks = generateCompLinks(identity);
+      const stage = stageFor(identity, valuation);
+      markTrack(track.id, {
+        identity,
+        valuation,
+        compLinks,
+        stage,
+        inFlight: false,
+        updatedAt: Date.now()
+      });
+      persistTrackHistory(track, undefined, {
+        identity,
+        valuation,
+        compLinks,
+        stage
+      }).catch(() => undefined);
+    }
   }
 
   async function loadHistoryForShow(showUrl: string): Promise<void> {
@@ -392,6 +442,7 @@ function App(): JSX.Element {
       trackHistoryIdsRef.current.clear();
       scannedTrackIdsRef.current.clear();
       recentScanSignaturesRef.current.clear();
+      contextPrewarmRef.current.clear();
     }
     showKeyRef.current = showKey;
     showUrlRef.current = showUrl;
@@ -482,14 +533,14 @@ function App(): JSX.Element {
     const sh = Math.min(video.videoHeight - sy, frameH + pad * 2);
     if (sw < 64 || sh < 64) return undefined;
 
-    const maxSide = 768;
+    const maxSide = 512;
     const scale = Math.min(1, maxSide / Math.max(sw, sh));
     canvas.width = Math.round(sw * scale);
     canvas.height = Math.round(sh * scale);
     const ctx = canvas.getContext("2d");
     if (!ctx) return undefined;
     ctx.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL("image/jpeg", 0.78);
+    return canvas.toDataURL("image/jpeg", 0.72);
   }
 
   return (
@@ -597,10 +648,8 @@ function rememberScanSignature(signatures: Map<string, number>, signature: strin
   }
 }
 
-function isUsableVideoViewport(viewport: VideoViewport | undefined): viewport is VideoViewport & { videoRect: NonNullable<VideoViewport["videoRect"]> } {
-  if (!viewport?.viewportWidth || !viewport.viewportHeight || !viewport.videoRect) return false;
-  const { videoRect } = viewport;
-  return videoRect.width >= 160 && videoRect.height >= 120;
+function isUsableVideoViewport(viewport: VideoViewport | undefined): viewport is VideoViewport {
+  return Boolean(viewport?.viewportWidth && viewport.viewportHeight && viewport.viewportWidth >= 160 && viewport.viewportHeight >= 120);
 }
 
 function toSummary(track: TrackedCard): TrackSummary {

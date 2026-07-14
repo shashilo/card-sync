@@ -41,6 +41,8 @@ export function buildValuation(
   allowAiEstimate: boolean,
   priceGuideQuote?: PriceGuideQuote
 ): Valuation {
+  if (priceGuideQuote) return valuationFromPriceGuide(identity, priceGuideQuote);
+
   const key = identityKey(identity);
   const cached = key ? sessionCache.get(key) : undefined;
   if (cached) {
@@ -50,8 +52,6 @@ export function buildValuation(
       reasons: ["Reused value from this live-show session.", ...cached.reasons]
     };
   }
-
-  if (priceGuideQuote) return valuationFromPriceGuide(identity, priceGuideQuote);
 
   const searchable = `${identitySearchText(identity)} ${identity.rawText}`.toLowerCase();
   const seeded = DEMO_CATALOG.find((entry) => entry.keywords.every((keyword) => searchable.includes(keyword.toLowerCase())));

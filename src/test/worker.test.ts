@@ -36,22 +36,10 @@ describe("comp proxy worker", () => {
     });
   });
 
-  it("searches products, fetches the best product, and returns a normalized quote", async () => {
+  it("uses the one-call product search fast path for a normalized quote", async () => {
     const fetchMock = vi.fn(async (url: string) => {
       const parsed = new URL(url);
-      if (parsed.pathname === "/api/products") {
-        return Response.json({
-          status: "success",
-          products: [
-            {
-              id: "72584",
-              "product-name": "Michael Jordan #57",
-              "console-name": "Basketball Cards 1986 Fleer"
-            }
-          ]
-        });
-      }
-
+      expect(parsed.pathname).toBe("/api/product");
       return Response.json({
         status: "success",
         id: "72584",
@@ -83,7 +71,63 @@ describe("comp proxy worker", () => {
         selectedPrice: 2255
       }
     });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
+  });
+
+  it("falls back to products plus product detail when direct search misses", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      const parsed = new URL(url);
+      if (parsed.pathname === "/api/product" && parsed.searchParams.has("q")) {
+        return Response.json({
+          status: "error",
+          "error-message": "No product found"
+        });
+      }
+
+      if (parsed.pathname === "/api/products") {
+        return Response.json({
+          status: "success",
+          products: [
+            {
+              id: "72584",
+              "product-name": "Michael Jordan #57",
+              "console-name": "Basketball Cards 1986 Fleer"
+            }
+          ]
+        });
+      }
+
+      return Response.json({
+        status: "success",
+        id: "72584",
+        "product-name": "Michael Jordan #57",
+        "console-name": "Basketball Cards 1986 Fleer",
+        "loose-price": 225500
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await handleRequest(
+      new Request("https://cardsync.test/v1/price-guide/lookup?fallback=1", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({ identity, query: "fallback jordan unique" })
+      }),
+      env
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      quote: {
+        productId: "72584",
+        selectedPrice: 2255
+      }
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     vi.unstubAllGlobals();
   });
 });

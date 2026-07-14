@@ -63,6 +63,20 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
   if (cached) return json(cached, 200, corsHeaders);
 
   const baseUrl = env.SPORTSCARDSPRO_BASE_URL || "https://www.pricecharting.com";
+  const fastProductUrl = withParams(`${baseUrl}/api/product`, {
+    t: env.SPORTSCARDSPRO_TOKEN,
+    q: query
+  });
+  const fastProductResponse = await providerJson(fastProductUrl);
+  if (isSuccess(fastProductResponse) && fastProductResponse.id) {
+    const ranked = rankPriceGuideCandidates(body.identity, [fastProductResponse]);
+    const top = ranked[0];
+    const quote = buildPriceGuideQuote(body.identity, query, top, fastProductResponse);
+    const response = { ok: true, quote } satisfies PriceGuideLookupResponse;
+    await putCached(cacheKey, response, cacheTtlSeconds(env));
+    return json(response, 200, corsHeaders);
+  }
+
   const productsUrl = withParams(`${baseUrl}/api/products`, {
     t: env.SPORTSCARDSPRO_TOKEN,
     q: query
