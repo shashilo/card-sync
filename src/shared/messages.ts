@@ -3,6 +3,7 @@ import type { PageContext, TrackSummary } from "./types";
 
 export type RuntimeMessage =
   | { type: "CS_CONTEXT"; context: PageContext }
+  | { type: "CS_GET_CONTEXT" }
   | { type: "CS_RENDER_TRACKS"; tracks: TrackSummary[] }
   | { type: "CS_CLEAR_OVERLAY" }
   | { type: "CS_SET_SCANNING"; scanning: boolean }

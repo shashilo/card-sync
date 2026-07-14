@@ -6,17 +6,11 @@ const OVERLAY_ID = "cardsync-overlay-root";
 let root: HTMLDivElement | null = null;
 let shadow: ShadowRoot | null = null;
 let scanning = false;
-let lastContextSentAt = 0;
-let contextTimer: number | undefined;
 let disabled = false;
 
 function disableContentScript(): void {
   disabled = true;
   scanning = false;
-  if (contextTimer !== undefined) {
-    window.clearInterval(contextTimer);
-    contextTimer = undefined;
-  }
 }
 
 function isContextInvalidated(error: unknown): boolean {
@@ -27,12 +21,10 @@ function sendRuntimeMessage(message: RuntimeMessage): void {
   if (disabled) return;
 
   try {
-    const result = chrome.runtime.sendMessage(message);
-    if (result && typeof result.catch === "function") {
-      result.catch((error: unknown) => {
-        if (isContextInvalidated(error)) disableContentScript();
-      });
-    }
+    chrome.runtime.sendMessage(message, () => {
+      const error = chrome.runtime.lastError;
+      if (error?.message?.toLowerCase().includes("extension context invalidated")) disableContentScript();
+    });
   } catch (error) {
     if (isContextInvalidated(error)) disableContentScript();
   }
@@ -223,24 +215,16 @@ function setScanning(next: boolean): void {
   else ensureOverlay();
 }
 
-function sendContext(): void {
-  if (disabled) return;
-
-  try {
-    const now = Date.now();
-    if (now - lastContextSentAt < 700) return;
-    lastContextSentAt = now;
-    sendRuntimeMessage({ type: "CS_CONTEXT", context: currentContext() });
-  } catch (error) {
-    if (isContextInvalidated(error)) disableContentScript();
-  }
-}
-
 try {
-  chrome.runtime.onMessage.addListener((message: RuntimeMessage) => {
+  chrome.runtime.onMessage.addListener((message: RuntimeMessage, _sender, sendResponse) => {
     if (disabled) return;
 
     try {
+      if (message.type === "CS_GET_CONTEXT") {
+        sendResponse(currentContext());
+        return;
+      }
+
       if (message.type === "CS_RENDER_TRACKS") {
         renderTracks(message.tracks);
         return;
@@ -261,8 +245,5 @@ try {
 } catch (error) {
   if (isContextInvalidated(error)) disableContentScript();
 }
-
-contextTimer = window.setInterval(sendContext, 900);
-sendContext();
 
 window.addEventListener("pagehide", disableContentScript, { once: true });

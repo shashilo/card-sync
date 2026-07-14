@@ -33,6 +33,7 @@ function App(): JSX.Element {
   const cropCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const loopRef = useRef<number | undefined>();
   const captureTabIdRef = useRef<number | undefined>();
+  const lastContextPullAtRef = useRef(0);
   const sessionCacheRef = useRef(new Map<string, Valuation>());
 
   useEffect(() => {
@@ -155,6 +156,7 @@ function App(): JSX.Element {
       videoRef.current = video;
       analysisCanvasRef.current = document.createElement("canvas");
       cropCanvasRef.current = document.createElement("canvas");
+      requestPageContext(tab.id).catch(() => undefined);
       setScanning(true);
       scheduleLoop();
     } catch (caught) {
@@ -201,6 +203,11 @@ function App(): JSX.Element {
 
     const now = Date.now();
     const currentSettings = settingsRef.current;
+    const targetTabId = captureTabIdRef.current;
+    if (targetTabId && now - lastContextPullAtRef.current > 900) {
+      lastContextPullAtRef.current = now;
+      requestPageContext(targetTabId).catch(() => undefined);
+    }
     const detections = detectCardBoxes(video, canvas, contextRef.current?.videoViewport, currentSettings.maxTrackedCards);
     const nextTracks = updateTrackedCards(tracksRef.current, detections, now, currentSettings.maxTrackedCards);
 
@@ -257,6 +264,13 @@ function App(): JSX.Element {
           });
         });
     }
+  }
+
+  async function requestPageContext(tabId: number): Promise<void> {
+    const response = await chrome.tabs.sendMessage(tabId, { type: "CS_GET_CONTEXT" }).catch(() => undefined);
+    if (!isPageContext(response)) return;
+    contextRef.current = response;
+    setContext(response);
   }
 
   function markTrack(id: string, patch: Partial<TrackedCard>): void {
@@ -378,6 +392,19 @@ function App(): JSX.Element {
 function toSummary(track: TrackedCard): TrackSummary {
   const { firstSeenAt: _firstSeenAt, lastSeenAt: _lastSeenAt, stableSince: _stableSince, identifyRequestedAt: _identifyRequestedAt, inFlight: _inFlight, ...summary } = track;
   return summary;
+}
+
+function isPageContext(value: unknown): value is PageContext {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<PageContext>;
+  return (
+    typeof candidate.url === "string" &&
+    typeof candidate.title === "string" &&
+    typeof candidate.visibleText === "string" &&
+    typeof candidate.auctionText === "string" &&
+    typeof candidate.collectedAt === "number" &&
+    Boolean(candidate.videoViewport)
+  );
 }
 
 function Metric({ label, value }: { label: string; value: string }): JSX.Element {
