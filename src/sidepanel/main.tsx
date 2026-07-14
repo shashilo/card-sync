@@ -26,6 +26,7 @@ interface CropSnapshot {
 
 interface ActiveScan extends ActiveScanFingerprint {
   signature: string;
+  requestId: string;
 }
 
 function App(): JSX.Element {
@@ -41,6 +42,7 @@ function App(): JSX.Element {
   const settingsRef = useRef(settings);
   const contextRef = useRef<PageContext | undefined>();
   const tracksRef = useRef<TrackedCard[]>([]);
+  const activeTrackIdRef = useRef<string | undefined>();
   const streamRef = useRef<MediaStream | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const analysisCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -74,6 +76,10 @@ function App(): JSX.Element {
   }, [context]);
 
   useEffect(() => {
+    activeTrackIdRef.current = activeTrackId;
+  }, [activeTrackId]);
+
+  useEffect(() => {
     tracksRef.current = tracks;
     if (scanning) {
       const targetTabId = captureTabIdRef.current;
@@ -86,6 +92,11 @@ function App(): JSX.Element {
       if (message.type === "CS_CONTEXT") {
         setContext(message.context);
         prewarmPriceGuideFromContext(message.context).catch(() => undefined);
+      }
+      if (message.type === "CS_MANUAL_CAPTURE") {
+        manualCapture(message.trackId).catch((caught) => {
+          setError(caught instanceof Error ? caught.message : "Manual capture failed.");
+        });
       }
       if (message.type === "BG_CAPTURE_READY") startFromPendingCapture(message.capture);
       if (message.type === "BG_CAPTURE_ERROR") setError(message.message);
@@ -296,93 +307,99 @@ function App(): JSX.Element {
 
       if (!readyForFastAttempt || veryRecentlyRequested) continue;
 
-      const crop = cropTrack(video, track);
-      if (!crop) continue;
-      const slabLabelCrop = cropTrack(video, track, {
-        yRatio: 0,
-        heightRatio: 0.34,
-        maxSide: 384,
-        quality: 0.78
-      });
+      await startTrackScan(track, now);
+    }
+  }
 
-      const contextIdentity = inferIdentityFromContext(contextRef.current);
-      const signature = scanSignature(contextIdentity, track, crop);
-      const activeScan = activeScansRef.current.get(track.id);
+  async function manualCapture(trackId?: string): Promise<void> {
+    const track =
+      (trackId ? tracksRef.current.find((candidate) => candidate.id === trackId) : undefined) ??
+      (activeTrackIdRef.current ? tracksRef.current.find((candidate) => candidate.id === activeTrackIdRef.current) : undefined) ??
+      tracksRef.current[0];
+
+    if (!streamRef.current || !videoRef.current) {
+      setError("Start scanning before using manual capture.");
+      return;
+    }
+
+    if (!track) {
+      setError("No card outline is active yet. Wait for CardSync to draw the card, then click the outline to force capture.");
+      return;
+    }
+
+    const started = await startTrackScan(track, Date.now(), { force: true });
+    if (!started) {
+      setError("CardSync could not crop the current card yet. Try again when the outline is visible.");
+      return;
+    }
+
+    setError(null);
+  }
+
+  async function startTrackScan(track: TrackedCard, now: number, options: { force?: boolean } = {}): Promise<boolean> {
+    const video = videoRef.current;
+    if (!video) return false;
+
+    const crop = cropTrack(video, track);
+    if (!crop) return false;
+    const slabLabelCrop = cropTrack(video, track, {
+      yRatio: 0,
+      heightRatio: 0.34,
+      maxSide: 384,
+      quality: 0.78
+    });
+
+    const contextIdentity = inferIdentityFromContext(contextRef.current);
+    const signature = scanSignature(contextIdentity, track, crop);
+    const activeScan = activeScansRef.current.get(track.id);
+
+    if (!options.force) {
       const scanDecision = shouldStartScanForFingerprint(activeScan, recentCardFingerprintsRef.current, crop.fingerprint, now);
       if (scanDecision.activeScan && activeScan) activeScansRef.current.set(track.id, { ...activeScan, ...scanDecision.activeScan });
-      if (!scanDecision.shouldScan) continue;
-      if (hasRecentScanSignature(recentScanSignaturesRef.current, signature, now)) {
-        continue;
-      }
+      if (!scanDecision.shouldScan) return false;
+      if (hasRecentScanSignature(recentScanSignaturesRef.current, signature, now)) return false;
+    }
 
-      rememberScanSignature(recentScanSignaturesRef.current, signature, now);
-      rememberCardFingerprint(recentCardFingerprintsRef.current, crop.fingerprint, now);
-      activeScansRef.current.set(track.id, { signature, fingerprint: crop.fingerprint });
-      markTrack(track.id, { inFlight: true, identifyRequestedAt: now, stage: "candidate" });
-      const contextValuation = buildValuation(
-        contextIdentity,
-        sessionCacheRef.current,
-        undefined,
-        settingsRef.current.allowAiEstimatedValues
-      );
-      const contextStage = stageFor(contextIdentity, contextValuation);
-      markTrack(track.id, {
-        identity: contextIdentity,
-        valuation: contextValuation,
-        compLinks: generateCompLinks(contextIdentity),
-        stage: contextStage,
-        updatedAt: Date.now()
-      });
-      persistTrackHistory(track, crop.dataUrl, {
-        identity: contextIdentity,
-        valuation: contextValuation,
-        compLinks: generateCompLinks(contextIdentity),
-        stage: contextStage
-      }, signature).catch(() => undefined);
-      applyPriceGuide(track.id, track, crop.dataUrl, contextIdentity, signature).catch(() => undefined);
+    const requestId = crypto.randomUUID();
+    rememberScanSignature(recentScanSignaturesRef.current, signature, now);
+    rememberCardFingerprint(recentCardFingerprintsRef.current, crop.fingerprint, now);
+    activeScansRef.current.set(track.id, { signature, fingerprint: crop.fingerprint, requestId });
+    markTrack(track.id, { inFlight: true, identifyRequestedAt: now, stage: "candidate" });
 
-      const provider = settingsRef.current.provider;
-      if (provider.provider === "mock" || !provider.apiKey.trim()) {
-        markTrack(track.id, { inFlight: false });
-        continue;
-      }
+    const contextValuation = buildValuation(
+      contextIdentity,
+      sessionCacheRef.current,
+      undefined,
+      settingsRef.current.allowAiEstimatedValues
+    );
+    const contextStage = stageFor(contextIdentity, contextValuation);
+    const contextCompLinks = generateCompLinks(contextIdentity);
+    markTrack(track.id, {
+      identity: contextIdentity,
+      valuation: contextValuation,
+      compLinks: contextCompLinks,
+      stage: contextStage,
+      updatedAt: Date.now()
+    });
+    persistTrackHistory(track, crop.dataUrl, {
+      identity: contextIdentity,
+      valuation: contextValuation,
+      compLinks: contextCompLinks,
+      stage: contextStage
+    }, signature).catch(() => undefined);
+    applyPriceGuide(track.id, track, crop.dataUrl, contextIdentity, signature, requestId).catch(() => undefined);
 
-      if (slabLabelCrop) {
-        identifySlabLabel(slabLabelCrop.dataUrl, contextRef.current, settingsRef.current)
-          .then(({ identity, estimate }) => {
-            if (!isCurrentScan(track.id, signature)) return;
-            if (identity.confidence < 0.5) return;
-            const valuation = buildValuation(
-              identity,
-              sessionCacheRef.current,
-              estimate,
-              settingsRef.current.allowAiEstimatedValues
-            );
-            const compLinks = generateCompLinks(identity);
-            rememberValuation(identity, valuation, sessionCacheRef.current);
-            const stage = stageFor(identity, valuation);
-            markTrack(track.id, {
-              identity,
-              valuation,
-              compLinks,
-              stage,
-              inFlight: true,
-              updatedAt: Date.now()
-            });
-            persistTrackHistory(track, crop.dataUrl, {
-              identity,
-              valuation,
-              compLinks,
-              stage
-            }, signature).catch(() => undefined);
-            applyPriceGuide(track.id, track, crop.dataUrl, identity, signature).catch(() => undefined);
-          })
-          .catch(() => undefined);
-      }
+    const provider = settingsRef.current.provider;
+    if (provider.provider === "mock" || !provider.apiKey.trim()) {
+      markTrack(track.id, { inFlight: false });
+      return true;
+    }
 
-      identifyCard(crop.dataUrl, contextRef.current, settingsRef.current)
+    if (slabLabelCrop) {
+      identifySlabLabel(slabLabelCrop.dataUrl, contextRef.current, settingsRef.current)
         .then(({ identity, estimate }) => {
-          if (!isCurrentScan(track.id, signature)) return;
+          if (!isCurrentScan(track.id, signature, requestId)) return;
+          if (identity.confidence < 0.5) return;
           const valuation = buildValuation(
             identity,
             sessionCacheRef.current,
@@ -397,7 +414,7 @@ function App(): JSX.Element {
             valuation,
             compLinks,
             stage,
-            inFlight: false,
+            inFlight: true,
             updatedAt: Date.now()
           });
           persistTrackHistory(track, crop.dataUrl, {
@@ -406,26 +423,59 @@ function App(): JSX.Element {
             compLinks,
             stage
           }, signature).catch(() => undefined);
-          applyPriceGuide(track.id, track, crop.dataUrl, identity, signature).catch(() => undefined);
+          applyPriceGuide(track.id, track, crop.dataUrl, identity, signature, requestId).catch(() => undefined);
         })
-        .catch((caught) => {
-          if (!isCurrentScan(track.id, signature)) return;
-          markTrack(track.id, {
-            inFlight: false,
-            stage: "error",
-            label: caught instanceof Error ? `AI error: ${caught.message}` : "AI error"
-          });
-        });
+        .catch(() => undefined);
     }
+
+    identifyCard(crop.dataUrl, contextRef.current, settingsRef.current)
+      .then(({ identity, estimate }) => {
+        if (!isCurrentScan(track.id, signature, requestId)) return;
+        const valuation = buildValuation(
+          identity,
+          sessionCacheRef.current,
+          estimate,
+          settingsRef.current.allowAiEstimatedValues
+        );
+        const compLinks = generateCompLinks(identity);
+        rememberValuation(identity, valuation, sessionCacheRef.current);
+        const stage = stageFor(identity, valuation);
+        markTrack(track.id, {
+          identity,
+          valuation,
+          compLinks,
+          stage,
+          inFlight: false,
+          updatedAt: Date.now()
+        });
+        persistTrackHistory(track, crop.dataUrl, {
+          identity,
+          valuation,
+          compLinks,
+          stage
+        }, signature).catch(() => undefined);
+        applyPriceGuide(track.id, track, crop.dataUrl, identity, signature, requestId).catch(() => undefined);
+      })
+      .catch((caught) => {
+        if (!isCurrentScan(track.id, signature, requestId)) return;
+        markTrack(track.id, {
+          inFlight: false,
+          stage: "error",
+          label: caught instanceof Error ? `AI error: ${caught.message}` : "AI error"
+        });
+      });
+
+    return true;
   }
 
-  function isCurrentScan(trackId: string, signature: string): boolean {
-    return activeScansRef.current.get(trackId)?.signature === signature;
+  function isCurrentScan(trackId: string, signature: string, requestId?: string): boolean {
+    const activeScan = activeScansRef.current.get(trackId);
+    return activeScan?.signature === signature && (!requestId || activeScan.requestId === requestId);
   }
 
-  async function applyPriceGuide(trackId: string, track: TrackedCard, crop: string, identity: CardIdentity, signature?: string): Promise<void> {
+  async function applyPriceGuide(trackId: string, track: TrackedCard, crop: string, identity: CardIdentity, signature?: string, requestId?: string): Promise<void> {
     const quote = await lookupPriceGuide(identity, settingsRef.current.priceGuideProxyUrl);
-    if (signature && !isCurrentScan(trackId, signature)) return;
+    if (signature && !isCurrentScan(trackId, signature, requestId)) return;
     if (!quote) {
       markTrack(trackId, { inFlight: false, updatedAt: Date.now() });
       return;

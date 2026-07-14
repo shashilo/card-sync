@@ -51,7 +51,7 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.type === "CS_BADGE_CLICK" && sender.tab?.id) {
+  if ((message?.type === "CS_BADGE_CLICK" || message?.type === "CS_MANUAL_CAPTURE") && sender.tab?.id) {
     chrome.sidePanel.open({ tabId: sender.tab.id }).catch(() => undefined);
     sendResponse({ ok: true });
     return true;

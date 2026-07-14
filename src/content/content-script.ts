@@ -101,11 +101,22 @@ function ensureOverlay(): ShadowRoot | undefined {
       box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45), 0 8px 30px rgba(0, 0, 0, 0.28);
       box-sizing: border-box;
       transition: transform 120ms linear, width 120ms linear, height 120ms linear, border-color 120ms ease;
-      pointer-events: none;
+      pointer-events: auto;
+      cursor: crosshair;
     }
     .frame.yellow { border-color: rgb(245, 158, 11); }
     .frame.green { border-color: rgb(16, 185, 129); }
     .frame.red { border-color: rgb(239, 68, 68); }
+    .captureZone {
+      position: fixed;
+      border: 0;
+      padding: 0;
+      margin: 0;
+      background: transparent;
+      appearance: none;
+      pointer-events: auto;
+      cursor: crosshair;
+    }
     .badge {
       position: absolute;
       left: 0;
@@ -130,12 +141,18 @@ function ensureOverlay(): ShadowRoot | undefined {
       position: fixed;
       right: 14px;
       bottom: 14px;
+      border: 0;
       padding: 7px 9px;
       border-radius: 7px;
       background: rgba(17, 24, 39, 0.86);
       color: #fff;
       font: 600 12px/1.1 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      pointer-events: none;
+      pointer-events: auto;
+      cursor: pointer;
+    }
+    .status:disabled {
+      opacity: 0.78;
+      cursor: default;
     }
   `;
   state.shadow.append(style);
@@ -219,8 +236,24 @@ function renderTracks(tracks: TrackSummary[]): void {
   const target = ensureOverlay();
   if (!target) return;
   const videoRect = getLargestVideoRect();
+  target.querySelectorAll(".captureZone").forEach((node) => node.remove());
   target.querySelectorAll(".frame").forEach((node) => node.remove());
   target.querySelectorAll(".status").forEach((node) => node.remove());
+
+  if (state.scanning && tracks.length && videoRect) {
+    const captureZone = document.createElement("button");
+    captureZone.type = "button";
+    captureZone.className = "captureZone";
+    captureZone.title = "Capture current card";
+    captureZone.style.transform = `translate(${videoRect.x}px, ${videoRect.y}px)`;
+    captureZone.style.width = `${videoRect.width}px`;
+    captureZone.style.height = `${videoRect.height}px`;
+    captureZone.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (tracks[0]) requestManualCapture(tracks[0].id);
+    });
+    target.append(captureZone);
+  }
 
   for (const track of tracks) {
     const box = videoRect ? clampToRect(track.box, videoRect) : track.box;
@@ -231,25 +264,43 @@ function renderTracks(tracks: TrackSummary[]): void {
     frame.style.transform = `translate(${box.x}px, ${box.y}px)`;
     frame.style.width = `${box.width}px`;
     frame.style.height = `${box.height}px`;
+    frame.title = "Capture this card now";
+    frame.addEventListener("click", (event) => {
+      event.stopPropagation();
+      requestManualCapture(track.id);
+    });
 
     const badge = document.createElement("button");
     badge.type = "button";
     badge.className = `badge ${track.badgeTone}`;
     badge.textContent = track.label;
-    badge.title = "Open CardSync details";
-    badge.addEventListener("click", () => {
+    badge.title = "Capture this card now";
+    badge.addEventListener("click", (event) => {
+      event.stopPropagation();
       sendRuntimeMessage({ type: "CS_BADGE_CLICK", trackId: track.id });
+      requestManualCapture(track.id);
     });
     frame.append(badge);
     target.append(frame);
   }
 
   if (state.scanning) {
-    const status = document.createElement("div");
+    const status = document.createElement("button");
+    status.type = "button";
     status.className = "status";
-    status.textContent = tracks.length ? "CardSync scanning" : "CardSync looking for cards";
+    status.textContent = tracks.length ? "Capture current card" : "CardSync looking for cards";
+    status.title = tracks.length ? "Manual CardSync capture" : "Waiting for a card outline";
+    status.disabled = !tracks.length;
+    status.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (tracks[0]) requestManualCapture(tracks[0].id);
+    });
     target.append(status);
   }
+}
+
+function requestManualCapture(trackId?: string): void {
+  sendRuntimeMessage(trackId ? { type: "CS_MANUAL_CAPTURE", trackId } : { type: "CS_MANUAL_CAPTURE" });
 }
 
 function clampToRect(box: Box, bounds: Box): Box | undefined {

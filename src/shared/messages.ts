@@ -8,6 +8,7 @@ export type RuntimeMessage =
   | { type: "CS_CLEAR_OVERLAY" }
   | { type: "CS_SET_SCANNING"; scanning: boolean }
   | { type: "CS_BADGE_CLICK"; trackId: string }
+  | { type: "CS_MANUAL_CAPTURE"; trackId?: string }
   | { type: "BG_CAPTURE_READY"; capture: PendingCapture }
   | { type: "BG_CAPTURE_ERROR"; message: string }
   | { type: "BG_GET_ACTIVE_TAB" };
