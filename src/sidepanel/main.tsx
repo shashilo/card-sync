@@ -7,7 +7,7 @@ import { getActiveTab, sendToActiveTab, sendToTab } from "../shared/messages";
 import { applyProviderPreset, providerPreset, requestCustomProviderPermission } from "../shared/providers";
 import { DEFAULT_SETTINGS, loadSettings, saveSettings } from "../shared/settings";
 import type { BadgeTone, CardIdentity, ExtensionSettings, PageContext, ScanHistoryItem, TrackSummary, Valuation, VideoViewport } from "../shared/types";
-import { identifyCard } from "./lib/ai";
+import { identifyCard, identifySlabLabel } from "./lib/ai";
 import { detectCardBoxes } from "./lib/detector";
 import { clearShowHistory, listShowHistory, showKeyFromUrl, upsertScanHistoryItem } from "./lib/history";
 import { identityKey, inferIdentityFromContext } from "./lib/identity";
@@ -283,6 +283,12 @@ function App(): JSX.Element {
 
       const crop = cropTrack(video, track);
       if (!crop) continue;
+      const slabLabelCrop = cropTrack(video, track, {
+        yRatio: 0,
+        heightRatio: 0.34,
+        maxSide: 384,
+        quality: 0.78
+      });
 
       const contextIdentity = inferIdentityFromContext(contextRef.current);
       const signature = scanSignature(contextIdentity, track, crop);
@@ -320,6 +326,38 @@ function App(): JSX.Element {
       if (provider.provider === "mock" || !provider.apiKey.trim()) {
         markTrack(track.id, { inFlight: false });
         continue;
+      }
+
+      if (slabLabelCrop) {
+        identifySlabLabel(slabLabelCrop, contextRef.current, settingsRef.current)
+          .then(({ identity, estimate }) => {
+            if (identity.confidence < 0.5) return;
+            const valuation = buildValuation(
+              identity,
+              sessionCacheRef.current,
+              estimate,
+              settingsRef.current.allowAiEstimatedValues
+            );
+            const compLinks = generateCompLinks(identity);
+            rememberValuation(identity, valuation, sessionCacheRef.current);
+            const stage = stageFor(identity, valuation);
+            markTrack(track.id, {
+              identity,
+              valuation,
+              compLinks,
+              stage,
+              inFlight: true,
+              updatedAt: Date.now()
+            });
+            persistTrackHistory(track, crop, {
+              identity,
+              valuation,
+              compLinks,
+              stage
+            }).catch(() => undefined);
+            applyPriceGuide(track.id, track, crop, identity).catch(() => undefined);
+          })
+          .catch(() => undefined);
       }
 
       identifyCard(crop, contextRef.current, settingsRef.current)
@@ -517,15 +555,23 @@ function App(): JSX.Element {
     });
   }
 
-  function cropTrack(video: HTMLVideoElement, track: TrackedCard): string | undefined {
+  function cropTrack(
+    video: HTMLVideoElement,
+    track: TrackedCard,
+    options: { yRatio?: number; heightRatio?: number; maxSide?: number; quality?: number } = {}
+  ): string | undefined {
     const canvas = cropCanvasRef.current;
     const viewport = contextRef.current?.videoViewport;
     if (!canvas || !viewport?.viewportWidth || !viewport.viewportHeight) return undefined;
 
     const frameX = (track.box.x / viewport.viewportWidth) * video.videoWidth;
-    const frameY = (track.box.y / viewport.viewportHeight) * video.videoHeight;
+    const baseFrameY = (track.box.y / viewport.viewportHeight) * video.videoHeight;
     const frameW = (track.box.width / viewport.viewportWidth) * video.videoWidth;
-    const frameH = (track.box.height / viewport.viewportHeight) * video.videoHeight;
+    const baseFrameH = (track.box.height / viewport.viewportHeight) * video.videoHeight;
+    const yRatio = options.yRatio ?? 0;
+    const heightRatio = options.heightRatio ?? 1;
+    const frameY = baseFrameY + baseFrameH * yRatio;
+    const frameH = baseFrameH * heightRatio;
     const pad = Math.max(frameW, frameH) * 0.08;
     const sx = Math.max(0, frameX - pad);
     const sy = Math.max(0, frameY - pad);
@@ -533,14 +579,14 @@ function App(): JSX.Element {
     const sh = Math.min(video.videoHeight - sy, frameH + pad * 2);
     if (sw < 64 || sh < 64) return undefined;
 
-    const maxSide = 512;
+    const maxSide = options.maxSide ?? 512;
     const scale = Math.min(1, maxSide / Math.max(sw, sh));
     canvas.width = Math.round(sw * scale);
     canvas.height = Math.round(sh * scale);
     const ctx = canvas.getContext("2d");
     if (!ctx) return undefined;
     ctx.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL("image/jpeg", 0.72);
+    return canvas.toDataURL("image/jpeg", options.quality ?? 0.72);
   }
 
   return (

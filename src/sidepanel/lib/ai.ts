@@ -7,10 +7,29 @@ export interface AiCardResult {
   estimate?: AiValueEstimate;
 }
 
+type IdentifyMode = "card" | "slab-label";
+
 export async function identifyCard(
   imageDataUrl: string,
   context: PageContext | undefined,
   settings: ExtensionSettings
+): Promise<AiCardResult> {
+  return identifyImage(imageDataUrl, context, settings, "card");
+}
+
+export async function identifySlabLabel(
+  imageDataUrl: string,
+  context: PageContext | undefined,
+  settings: ExtensionSettings
+): Promise<AiCardResult> {
+  return identifyImage(imageDataUrl, context, settings, "slab-label");
+}
+
+async function identifyImage(
+  imageDataUrl: string,
+  context: PageContext | undefined,
+  settings: ExtensionSettings,
+  mode: IdentifyMode
 ): Promise<AiCardResult> {
   const fallback = inferIdentityFromContext(context);
   const provider = settings.provider;
@@ -19,23 +38,24 @@ export async function identifyCard(
   }
 
   if (provider.provider === "anthropic") {
-    return identifyWithAnthropic(imageDataUrl, context, provider, fallback);
+    return identifyWithAnthropic(imageDataUrl, context, provider, fallback, mode);
   }
 
-  return identifyWithOpenAiCompatible(imageDataUrl, context, provider, fallback);
+  return identifyWithOpenAiCompatible(imageDataUrl, context, provider, fallback, mode);
 }
 
 async function identifyWithOpenAiCompatible(
   imageDataUrl: string,
   context: PageContext | undefined,
   provider: ProviderSettings,
-  fallback: CardIdentity
+  fallback: CardIdentity,
+  mode: IdentifyMode
 ): Promise<AiCardResult> {
   const body: Record<string, unknown> = {
     model: provider.model,
     temperature: 0.1,
     messages: [
-      { role: "system", content: buildPrompt() },
+      { role: "system", content: buildPrompt(mode) },
       {
         role: "user",
         content: [
@@ -82,7 +102,8 @@ async function identifyWithAnthropic(
   imageDataUrl: string,
   context: PageContext | undefined,
   provider: ProviderSettings,
-  fallback: CardIdentity
+  fallback: CardIdentity,
+  mode: IdentifyMode
 ): Promise<AiCardResult> {
   const image = splitDataUrl(imageDataUrl);
   const response = await fetch(`${provider.baseUrl.replace(/\/$/, "")}/messages`, {
@@ -97,7 +118,7 @@ async function identifyWithAnthropic(
       model: provider.model,
       max_tokens: 1200,
       temperature: 0.1,
-      system: buildPrompt(),
+      system: buildPrompt(mode),
       messages: [
         {
           role: "user",
@@ -128,11 +149,23 @@ async function identifyWithAnthropic(
   return parseProviderJson(text, fallback);
 }
 
-function buildPrompt(): string {
+function buildPrompt(mode: IdentifyMode): string {
+  const slabInstructions =
+    mode === "slab-label"
+      ? [
+          "The image is expected to be only the top label area of a graded slab.",
+          "Prioritize exact OCR from the slab label: player/name, year, set, card number, parallel, grade company, numeric grade, and cert/serial if visible.",
+          "If the crop is not a readable slab label, return the fallback/page-text identity with confidence below 0.45 and explain that the slab label was not readable.",
+          "Do not identify from card art when the slab label text is missing."
+        ]
+      : [
+          "Identify the visible card if possible. Use page text as weak evidence, not truth.",
+          "If a graded slab label is visible, read the label text first because it is stronger evidence than card art."
+        ];
   const prompt = [
     "You identify sports trading cards in livestream screenshots for a sudden-death auction helper.",
     "Return strict JSON only.",
-    "Identify the visible card if possible. Use page text as weak evidence, not truth.",
+    ...slabInstructions,
     "If year, set, player, grade, card number, or parallel is uncertain, leave it blank or lower confidence.",
     "You may include a broad provisional USD estimate only when useful for a 15-30 second buyer risk signal.",
     "Do not pretend the estimate is a sold comp.",
