@@ -13,6 +13,7 @@ import { clearShowHistory, listShowHistory, showKeyFromUrl, upsertScanHistoryIte
 import { identityKey, inferIdentityFromContext } from "./lib/identity";
 import { lookupPriceGuide } from "./lib/price-guide";
 import { generateCompLinks, buildValuation, rememberValuation, stageFor } from "./lib/pricing";
+import { rememberCardFingerprint, shouldPersistScanHistory, shouldStartScanForFingerprint } from "./lib/scan-gate";
 import { formatPrice, labelForTrack, updateTrackedCards, type TrackedCard } from "./lib/tracker";
 import "./styles.css";
 
@@ -308,9 +309,7 @@ function App(): JSX.Element {
       const contextIdentity = inferIdentityFromContext(contextRef.current);
       const signature = scanSignature(contextIdentity, track, crop);
       const activeScan = activeScansRef.current.get(track.id);
-      const sameActiveCard = Boolean(activeScan && sameCardFingerprint(activeScan.fingerprint, crop.fingerprint));
-      if (sameActiveCard) continue;
-      if (hasRecentCardFingerprint(recentCardFingerprintsRef.current, crop.fingerprint, now)) continue;
+      if (!shouldStartScanForFingerprint(activeScan, recentCardFingerprintsRef.current, crop.fingerprint, now)) continue;
       if (hasRecentScanSignature(recentScanSignaturesRef.current, signature, now)) {
         continue;
       }
@@ -527,6 +526,7 @@ function App(): JSX.Element {
   ): Promise<void> {
     const showKey = showKeyRef.current;
     const historyKey = signature ?? activeScansRef.current.get(track.id)?.signature ?? track.id;
+    if (!shouldPersistScanHistory(patch.stage, patch.identity?.confidence)) return;
     if (!showKey || (!cropImageDataUrl && !scanHistoryIdsRef.current.has(historyKey))) return;
 
     const existingId = scanHistoryIdsRef.current.get(historyKey);
@@ -709,19 +709,6 @@ function scanSignature(identity: CardIdentity, track: TrackedCard, crop: CropSna
   ].join("|");
 }
 
-function sameCardFingerprint(a: string, b: string): boolean {
-  return hammingDistance(a, b) <= 10;
-}
-
-function hammingDistance(a: string, b: string): number {
-  const length = Math.min(a.length, b.length);
-  let distance = Math.abs(a.length - b.length);
-  for (let index = 0; index < length; index += 1) {
-    if (a[index] !== b[index]) distance += 1;
-  }
-  return distance;
-}
-
 function fingerprintCanvas(ctx: CanvasRenderingContext2D, width: number, height: number): string {
   const sampleSize = 8;
   const values: number[] = [];
@@ -755,21 +742,6 @@ function rememberScanSignature(signatures: Map<string, number>, signature: strin
   signatures.set(signature, now);
   for (const [key, seenAt] of signatures) {
     if (now - seenAt > 15_000) signatures.delete(key);
-  }
-}
-
-function hasRecentCardFingerprint(fingerprints: Map<string, number>, fingerprint: string, now: number): boolean {
-  for (const [existing, seenAt] of fingerprints) {
-    if (now - seenAt <= 12_000 && sameCardFingerprint(existing, fingerprint)) return true;
-  }
-  return false;
-}
-
-function rememberCardFingerprint(fingerprints: Map<string, number>, fingerprint: string, now: number): void {
-  if (!fingerprint) return;
-  fingerprints.set(fingerprint, now);
-  for (const [key, seenAt] of fingerprints) {
-    if (now - seenAt > 20_000) fingerprints.delete(key);
   }
 }
 
