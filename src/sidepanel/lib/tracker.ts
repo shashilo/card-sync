@@ -18,6 +18,16 @@ function overlap(a: Box, b: Box): number {
   return union > 0 ? intersection / union : 0;
 }
 
+function centerAffinity(a: Box, b: Box): number {
+  const ax = a.x + a.width / 2;
+  const ay = a.y + a.height / 2;
+  const bx = b.x + b.width / 2;
+  const by = b.y + b.height / 2;
+  const distance = Math.hypot(ax - bx, ay - by);
+  const normalizer = Math.max(1, Math.max(a.width, a.height, b.width, b.height));
+  return Math.max(0, 1 - distance / normalizer);
+}
+
 function smoothBox(previous: Box, next: Box): Box {
   const alpha = 0.34;
   return {
@@ -63,14 +73,14 @@ export function updateTrackedCards(previous: TrackedCard[], detections: Detectio
 
     detections.forEach((detection, index) => {
       if (used.has(index)) return;
-      const score = overlap(track.box, detection);
+      const score = overlap(track.box, detection) + centerAffinity(track.box, detection) * 0.35;
       if (score > bestScore) {
         bestScore = score;
         bestIndex = index;
       }
     });
 
-    if (bestIndex >= 0 && bestScore > 0.12) {
+    if (bestIndex >= 0 && bestScore > 0.18) {
       const detection = detections[bestIndex];
       used.add(bestIndex);
       next.push({

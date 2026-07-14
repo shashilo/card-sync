@@ -275,11 +275,16 @@ function App(): JSX.Element {
 
     for (const track of currentTracks) {
       const stableFor = now - (track.stableSince ?? track.firstSeenAt);
+      const visibleFor = now - track.firstSeenAt;
       const alreadyUseful = track.identity && track.valuation?.source && track.valuation.source !== "none";
       const recentlyRequested = track.identifyRequestedAt && now - track.identifyRequestedAt < 7000;
       const alreadyScanned = scannedTrackIdsRef.current.has(track.id);
+      const readyForFastAttempt =
+        stableFor >= settingsRef.current.identifyStableAfterMs ||
+        visibleFor >= 450 ||
+        track.detectionConfidence >= 0.34;
 
-      if (alreadyUseful || alreadyScanned || track.inFlight || recentlyRequested || stableFor < settingsRef.current.identifyStableAfterMs) continue;
+      if (alreadyUseful || alreadyScanned || track.inFlight || recentlyRequested || !readyForFastAttempt) continue;
 
       const crop = cropTrack(video, track);
       if (!crop) continue;

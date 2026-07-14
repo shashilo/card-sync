@@ -13,7 +13,7 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   },
   priceGuideProxyUrl: PRICE_GUIDE_PROXY_DEFAULT_URL,
   scanCadenceMs: 250,
-  identifyStableAfterMs: 350,
+  identifyStableAfterMs: 150,
   maxTrackedCards: 1,
   allowAiEstimatedValues: true
 };
