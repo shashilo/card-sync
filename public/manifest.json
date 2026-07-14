@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "CardSync Sudden-Death POC",
+  "description": "Live sports-card detection, provisional value ranges, and comp links for Whatnot sudden-death auctions.",
+  "version": "0.1.0",
+  "action": {
+    "default_title": "Open CardSync"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*.whatnot.com/*"],
+      "js": ["content-script.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "host_permissions": [
+    "https://*.whatnot.com/*",
+    "https://api.openai.com/*",
+    "https://openrouter.ai/*",
+    "https://api.anthropic.com/*"
+  ],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
+  "options_page": "options.html",
+  "permissions": ["activeTab", "sidePanel", "storage", "tabs", "tabCapture"],
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  }
+}
