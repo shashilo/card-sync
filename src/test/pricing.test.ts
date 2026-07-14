@@ -1,4 +1,11 @@
 import { describe, expect, it } from "vitest";
+import {
+  buildPriceGuideQuery,
+  buildPriceGuideQuote,
+  priceCentsToDollars,
+  rankPriceGuideCandidates,
+  selectSportsCardsProPrice
+} from "../shared/price-guide";
 import type { CardIdentity, Valuation } from "../shared/types";
 import { identityKey, inferIdentityFromContext } from "../sidepanel/lib/identity";
 import { buildValuation, generateCompLinks, stageFor } from "../sidepanel/lib/pricing";
@@ -65,5 +72,96 @@ describe("pricing pipeline", () => {
 
     expect(identity.player).toBe("Michael Jordan");
     expect(identity.confidence).toBeGreaterThan(0.5);
+  });
+
+  it("builds a price-guide query from normalized identity", () => {
+    const query = buildPriceGuideQuery({
+      ...jordan,
+      gradeCompany: "PSA",
+      grade: "10",
+      confidence: 0.86
+    });
+
+    expect(query.query).toContain("1986 Michael Jordan Fleer #57 PSA 10");
+  });
+
+  it("ranks exact price-guide candidates above sticker and number mismatches", () => {
+    const ranked = rankPriceGuideCandidates(jordan, [
+      {
+        id: "90923",
+        "product-name": "Michael Jordan #8",
+        "console-name": "Basketball Cards 1986 Fleer Sticker"
+      },
+      {
+        id: "72584",
+        "product-name": "Michael Jordan #57",
+        "console-name": "Basketball Cards 1986 Fleer"
+      }
+    ]);
+
+    expect(ranked[0].product.id).toBe("72584");
+    expect(ranked[0].confidence).toBeGreaterThan(0.65);
+  });
+
+  it("maps grade and converts provider cents to dollars", () => {
+    const selected = selectSportsCardsProPrice(
+      { ...jordan, gradeCompany: "PSA", grade: "10" },
+      {
+        "manual-only-price": 602295,
+        "loose-price": 225500
+      }
+    );
+
+    expect(selected.key).toBe("manual-only-price");
+    expect(selected.price).toBe(6022.95);
+    expect(priceCentsToDollars(1732)).toBe(17.32);
+  });
+
+  it("returns no price for low-confidence price-guide matches", () => {
+    const quote = buildPriceGuideQuote(
+      jordan,
+      "1986 Michael Jordan Fleer #57",
+      {
+        confidence: 0.44,
+        product: {
+          id: "90923",
+          "product-name": "Michael Jordan #8",
+          "console-name": "Basketball Cards 1986 Fleer Sticker"
+        },
+        warnings: ["bad match"]
+      },
+      {
+        id: "90923",
+        "product-name": "Michael Jordan #8",
+        "console-name": "Basketball Cards 1986 Fleer Sticker",
+        "loose-price": 10000
+      }
+    );
+
+    const valuation = buildValuation(jordan, new Map(), undefined, true, quote);
+    expect(valuation.source).toBe("none");
+    expect(valuation.maxBid).toBe(0);
+  });
+
+  it("creates price-guide valuations from confident provider quotes", () => {
+    const ranked = rankPriceGuideCandidates(jordan, [
+      {
+        id: "72584",
+        "product-name": "Michael Jordan #57",
+        "console-name": "Basketball Cards 1986 Fleer"
+      }
+    ]);
+    const quote = buildPriceGuideQuote(jordan, "1986 Michael Jordan Fleer #57", ranked[0], {
+      id: "72584",
+      "product-name": "Michael Jordan #57",
+      "console-name": "Basketball Cards 1986 Fleer",
+      "loose-price": 225500
+    });
+
+    const valuation = buildValuation(jordan, new Map(), undefined, true, quote);
+    expect(valuation.source).toBe("price-guide");
+    expect(valuation.low).toBe(1917);
+    expect(valuation.maxBid).toBe(1917);
+    expect(valuation.high).toBe(2593);
   });
 });

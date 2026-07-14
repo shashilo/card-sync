@@ -11,6 +11,7 @@ import { identifyCard } from "./lib/ai";
 import { detectCardBoxes } from "./lib/detector";
 import { clearShowHistory, listShowHistory, showKeyFromUrl, upsertScanHistoryItem } from "./lib/history";
 import { identityKey, inferIdentityFromContext } from "./lib/identity";
+import { lookupPriceGuide } from "./lib/price-guide";
 import { generateCompLinks, buildValuation, rememberValuation, stageFor } from "./lib/pricing";
 import { formatPrice, labelForTrack, updateTrackedCards, type TrackedCard } from "./lib/tracker";
 import "./styles.css";
@@ -309,6 +310,7 @@ function App(): JSX.Element {
         compLinks: generateCompLinks(contextIdentity),
         stage: contextStage
       }).catch(() => undefined);
+      applyPriceGuide(track.id, track, crop, contextIdentity).catch(() => undefined);
 
       const provider = settingsRef.current.provider;
       if (provider.provider === "mock" || !provider.apiKey.trim()) {
@@ -341,6 +343,7 @@ function App(): JSX.Element {
             compLinks,
             stage
           }).catch(() => undefined);
+          applyPriceGuide(track.id, track, crop, identity).catch(() => undefined);
         })
         .catch((caught) => {
           markTrack(track.id, {
@@ -350,6 +353,30 @@ function App(): JSX.Element {
           });
         });
     }
+  }
+
+  async function applyPriceGuide(trackId: string, track: TrackedCard, crop: string, identity: CardIdentity): Promise<void> {
+    const quote = await lookupPriceGuide(identity, settingsRef.current.priceGuideProxyUrl);
+    if (!quote) return;
+
+    const valuation = buildValuation(identity, sessionCacheRef.current, undefined, settingsRef.current.allowAiEstimatedValues, quote);
+    const compLinks = generateCompLinks(identity);
+    rememberValuation(identity, valuation, sessionCacheRef.current);
+    const stage = stageFor(identity, valuation);
+    markTrack(trackId, {
+      identity,
+      valuation,
+      compLinks,
+      stage,
+      inFlight: false,
+      updatedAt: Date.now()
+    });
+    await persistTrackHistory(track, crop, {
+      identity,
+      valuation,
+      compLinks,
+      stage
+    });
   }
 
   async function requestPageContext(tabId: number): Promise<void> {
@@ -499,8 +526,8 @@ function App(): JSX.Element {
 
       <section className="hudGrid">
         <Metric label="Tracked" value={tracks.length.toString()} />
-        <Metric label="Session comps" value={sessionCacheRef.current.size.toString()} />
-        <Metric label="AI" value={providerPreset(settings.provider.provider).shortLabel} />
+        <Metric label="Session values" value={sessionCacheRef.current.size.toString()} />
+        <Metric label="Pricing" value={settings.priceGuideProxyUrl.trim() ? "Guide" : "Links"} />
       </section>
 
       <section className="trackList">
@@ -616,7 +643,7 @@ function DetailPanel({ track }: { track: TrackedCard }): JSX.Element {
 
       {track.valuation?.source && track.valuation.source !== "none" ? (
         <div className="valueBox">
-          <span>{track.valuation.source === "ai-estimate" ? "Provisional Fast Value" : "Comp-backed Fast Value"}</span>
+          <span>{valuationTitle(track.valuation)}</span>
           <strong>
             {formatPrice(track.valuation.low)}-{formatPrice(track.valuation.high)}
           </strong>
@@ -646,6 +673,14 @@ function DetailPanel({ track }: { track: TrackedCard }): JSX.Element {
       ) : null}
     </section>
   );
+}
+
+function valuationTitle(valuation: Valuation): string {
+  if (valuation.source === "price-guide" || valuation.priceGuideQuote) return "Price-backed Fast Value";
+  if (valuation.source === "ai-estimate") return "Provisional Fast Value";
+  if (valuation.source === "seeded-demo") return "Demo Fast Value";
+  if (valuation.source === "session-cache") return "Cached Fast Value";
+  return "Fast Value";
 }
 
 function HistoryPanel({ items, onClear }: { items: ScanHistoryItem[]; onClear: () => Promise<void> }): JSX.Element {
@@ -777,6 +812,15 @@ function SettingsPanel({
           <option value="custom-openai-compatible">Custom OpenAI-compatible</option>
         </select>
         <span className="helper">{preset.help}</span>
+      </label>
+      <label>
+        Price guide proxy
+        <input
+          value={draft.priceGuideProxyUrl}
+          onChange={(event) => setDraft({ ...draft, priceGuideProxyUrl: event.target.value })}
+          placeholder="http://127.0.0.1:8787/v1/price-guide/lookup"
+        />
+        <span className="helper">CardSync proxy endpoint for SportsCardsPro values. Leave blank to use manual comp links only.</span>
       </label>
       <label>
         API key

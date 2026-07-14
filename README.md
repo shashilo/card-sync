@@ -17,7 +17,8 @@ Then load `dist/` as an unpacked extension in Chrome.
 - The side panel starts `tabCapture` after the user clicks `Start scanning`.
 - Local canvas vision tracks card-shaped rectangles continuously.
 - Stable card crops are sent to the configured AI provider, not every frame.
-- The overlay shows staged states: detecting, candidate, fast value, or comp-backed.
+- Stable identities can be sent to a CardSync comp proxy for SportsCardsPro / PriceCharting price-guide values.
+- The overlay shows staged states: detecting, candidate, fast value, or price-backed.
 - The sidebar shows identity evidence, warnings, and comp-search links.
 
 ## BYOK AI Settings
@@ -33,4 +34,14 @@ API keys are stored locally in `chrome.storage.local` for this POC. CardSync doe
 
 ## Limits
 
-This is decision support, not an appraisal tool. AI-estimated values are labeled provisional. Comp-backed pricing requires a real data provider or source-specific integration beyond the seeded demo catalog.
+This is decision support, not an appraisal tool. AI-estimated values are labeled provisional. Price-backed values require the CardSync comp proxy and a SportsCardsPro token.
+
+## SportsCardsPro Price Guide Proxy
+
+The extension defaults to `http://127.0.0.1:8787/v1/price-guide/lookup` for local POC testing. Run the proxy locally with:
+
+```bash
+npx wrangler dev worker/src/index.ts --config worker/wrangler.toml --local --port 8787
+```
+
+Set `SPORTSCARDSPRO_TOKEN` in `worker/.dev.vars` for local development or as a Cloudflare Worker secret for deployment. The extension only stores the proxy URL; the SportsCardsPro token stays server-side.

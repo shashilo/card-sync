@@ -1,0 +1,6 @@
+name = "cardsync-comp-proxy"
+main = "src/index.ts"
+compatibility_date = "2026-07-14"
+
+[vars]
+CACHE_TTL_SECONDS = "86400"

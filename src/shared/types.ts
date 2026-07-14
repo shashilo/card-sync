@@ -60,16 +60,33 @@ export interface CompLink {
   url: string;
 }
 
+export type CompProvider = "sportscardspro" | "manual-links" | "demo";
+
+export interface PriceGuideQuote {
+  provider: CompProvider;
+  providerId: string;
+  productId: string;
+  productName: string;
+  setName?: string;
+  matchedQuery: string;
+  rawProviderRow: Record<string, unknown>;
+  selectedCondition: string;
+  selectedPrice: number;
+  confidence: number;
+  warnings: string[];
+}
+
 export interface Valuation {
   low: number;
   high: number;
   maxBid: number;
   currency: "USD";
   confidence: number;
-  source: "session-cache" | "seeded-demo" | "ai-estimate" | "none";
+  source: "session-cache" | "seeded-demo" | "price-guide" | "ai-estimate" | "none";
   compCount: number;
   reasons: string[];
   warnings: string[];
+  priceGuideQuote?: PriceGuideQuote;
 }
 
 export interface TrackSummary {
@@ -115,6 +132,7 @@ export interface ProviderSettings {
 
 export interface ExtensionSettings {
   provider: ProviderSettings;
+  priceGuideProxyUrl: string;
   scanCadenceMs: number;
   identifyStableAfterMs: number;
   maxTrackedCards: number;

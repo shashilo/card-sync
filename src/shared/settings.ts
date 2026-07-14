@@ -1,4 +1,5 @@
 import type { ExtensionSettings } from "./types";
+import { PRICE_GUIDE_PROXY_DEFAULT_URL } from "./price-guide";
 import { normalizeProviderSettings } from "./providers";
 
 const SETTINGS_KEY = "cardsync.settings";
@@ -10,6 +11,7 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
     baseUrl: "",
     model: "mock"
   },
+  priceGuideProxyUrl: PRICE_GUIDE_PROXY_DEFAULT_URL,
   scanCadenceMs: 350,
   identifyStableAfterMs: 900,
   maxTrackedCards: 1,

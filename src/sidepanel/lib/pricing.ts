@@ -1,5 +1,6 @@
 import { DEMO_CATALOG } from "../../shared/demo-catalog";
-import type { CardIdentity, CompLink, Valuation } from "../../shared/types";
+import { PRICE_GUIDE_MIN_CONFIDENCE } from "../../shared/price-guide";
+import type { CardIdentity, CompLink, PriceGuideQuote, Valuation } from "../../shared/types";
 import { identityKey, identitySearchText } from "./identity";
 
 export interface AiValueEstimate {
@@ -37,7 +38,8 @@ export function buildValuation(
   identity: CardIdentity,
   sessionCache: Map<string, Valuation>,
   aiEstimate: AiValueEstimate | undefined,
-  allowAiEstimate: boolean
+  allowAiEstimate: boolean,
+  priceGuideQuote?: PriceGuideQuote
 ): Valuation {
   const key = identityKey(identity);
   const cached = key ? sessionCache.get(key) : undefined;
@@ -48,6 +50,8 @@ export function buildValuation(
       reasons: ["Reused value from this live-show session.", ...cached.reasons]
     };
   }
+
+  if (priceGuideQuote) return valuationFromPriceGuide(identity, priceGuideQuote);
 
   const searchable = `${identitySearchText(identity)} ${identity.rawText}`.toLowerCase();
   const seeded = DEMO_CATALOG.find((entry) => entry.keywords.every((keyword) => searchable.includes(keyword.toLowerCase())));
@@ -97,4 +101,55 @@ export function rememberValuation(identity: CardIdentity, valuation: Valuation, 
   const key = identityKey(identity);
   if (!key || valuation.source === "none" || valuation.source === "ai-estimate") return;
   cache.set(key, valuation);
+}
+
+function valuationFromPriceGuide(identity: CardIdentity, quote: PriceGuideQuote): Valuation {
+  const warnings = [
+    ...quote.warnings,
+    ...missingIdentityWarnings(identity),
+    "Price-guide value only; verify sold comps before treating this as an appraisal."
+  ];
+
+  if (quote.confidence < PRICE_GUIDE_MIN_CONFIDENCE || quote.selectedPrice <= 0) {
+    return {
+      low: 0,
+      high: 0,
+      maxBid: 0,
+      currency: "USD",
+      confidence: Math.min(identity.confidence, quote.confidence),
+      source: "none",
+      compCount: 0,
+      reasons: [`SportsCardsPro candidate found for "${quote.productName}", but match confidence is below the pricing threshold.`],
+      warnings
+    };
+  }
+
+  const fairValue = quote.selectedPrice;
+  const confidence = Math.min(0.96, Math.max(identity.confidence, quote.confidence * 0.86 + identity.confidence * 0.14));
+
+  return {
+    low: Math.round(fairValue * 0.85),
+    high: Math.round(fairValue * 1.15),
+    maxBid: Math.round(fairValue * 0.85),
+    currency: "USD",
+    confidence,
+    source: "price-guide",
+    compCount: 1,
+    reasons: [
+      `Price-backed by SportsCardsPro ${quote.selectedCondition} value for "${quote.productName}".`,
+      quote.setName ? `Matched guide set: ${quote.setName}.` : `Matched guide query: ${quote.matchedQuery}.`
+    ],
+    warnings,
+    priceGuideQuote: quote
+  };
+}
+
+function missingIdentityWarnings(identity: CardIdentity): string[] {
+  const warnings: string[] = [];
+  if (!identity.grade && !identity.gradeCompany) warnings.push("Grade is uncertain; raw/ungraded price-guide value was used.");
+  if (!identity.parallel) warnings.push("Parallel is uncertain; verify the variant before bidding.");
+  if (!identity.cardNumber) warnings.push("Card number is uncertain; verify the exact card before bidding.");
+  if (identity.serialNumber) warnings.push("Serial-numbered variants can price materially above or below the guide value.");
+  if (identity.autograph === undefined) warnings.push("Autograph status is uncertain.");
+  return warnings;
 }
