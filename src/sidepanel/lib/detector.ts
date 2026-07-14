@@ -92,6 +92,32 @@ function centerBonus(
   return clamp(1 - Math.hypot(nx, ny), 0, 1);
 }
 
+function sizeBonus(
+  box: { width: number; height: number },
+  bounds: { width: number; height: number }
+): number {
+  const heightShare = box.height / Math.max(1, bounds.height);
+  const areaShare = (box.width * box.height) / Math.max(1, bounds.width * bounds.height);
+  return clamp(heightShare * 0.78 + areaShare * 0.55, 0, 1);
+}
+
+function expandBox(
+  box: { x: number; y: number; width: number; height: number },
+  bounds: { x: number; y: number; width: number; height: number }
+): Box {
+  const pad = Math.min(box.width, box.height) * 0.08;
+  const x = clamp(box.x - pad, bounds.x, bounds.x + bounds.width);
+  const y = clamp(box.y - pad, bounds.y, bounds.y + bounds.height);
+  const right = clamp(box.x + box.width + pad, bounds.x, bounds.x + bounds.width);
+  const bottom = clamp(box.y + box.height + pad, bounds.y, bounds.y + bounds.height);
+  return {
+    x,
+    y,
+    width: Math.max(1, right - x),
+    height: Math.max(1, bottom - y)
+  };
+}
+
 export function buildDetectionScanPlan(analysisWidth: number, analysisHeight: number): DetectionScanPlan {
   const searchBounds = {
     x: 0,
@@ -99,8 +125,8 @@ export function buildDetectionScanPlan(analysisWidth: number, analysisHeight: nu
     width: analysisWidth,
     height: analysisHeight
   };
-  const minHeight = clamp(searchBounds.height * 0.18, 44, searchBounds.height);
-  const maxHeight = clamp(searchBounds.height * 0.96, minHeight, searchBounds.height);
+  const minHeight = clamp(searchBounds.height * 0.3, 76, searchBounds.height);
+  const maxHeight = clamp(searchBounds.height * 0.98, minHeight, searchBounds.height);
 
   return {
     searchBounds,
@@ -183,19 +209,24 @@ export function detectCardBoxes(
           const innerBrightness = rectSum(brightnessIntegral, innerX, innerY, innerW, innerH) / (innerW * innerH);
           const outerBrightness = rectSum(brightnessIntegral, x, y, w, h) / (w * h);
           const contrast = Math.abs(innerBrightness - outerBrightness);
+          const center = centerBonus({ x, y, width: w, height: h }, searchBounds);
+          const size = sizeBonus({ width: w, height: h }, searchBounds);
           const score =
-            borderDensity * 0.7 +
-            innerEdges * 0.18 +
-            contrast * 0.16 +
-            centerBonus({ x, y, width: w, height: h }, searchBounds) * 0.1;
+            borderDensity * 0.58 +
+            innerEdges * 0.14 +
+            contrast * 0.12 +
+            center * 0.14 +
+            size * 0.22;
 
-          if (score < 0.18) continue;
+          if (score < 0.22) continue;
+
+          const expanded = expandBox({ x, y, width: w, height: h }, searchBounds);
 
           candidates.push({
-            x: x * outputScaleX,
-            y: y * outputScaleY,
-            width: w * outputScaleX,
-            height: h * outputScaleY,
+            x: expanded.x * outputScaleX,
+            y: expanded.y * outputScaleY,
+            width: expanded.width * outputScaleX,
+            height: expanded.height * outputScaleY,
             confidence: clamp(score, 0, 0.96)
           });
         }

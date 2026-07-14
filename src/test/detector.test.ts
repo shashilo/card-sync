@@ -11,8 +11,8 @@ describe("card detector scan plan", () => {
       width: 480,
       height: 270
     });
-    expect(plan.minHeight).toBeLessThan(62);
-    expect(plan.maxHeight).toBeGreaterThan(250);
+    expect(plan.minHeight).toBeGreaterThanOrEqual(81);
+    expect(plan.maxHeight).toBeGreaterThan(260);
   });
 
   it("supports both vertical and horizontal card orientations", () => {
