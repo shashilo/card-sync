@@ -6,7 +6,7 @@ import type { RuntimeMessage } from "../shared/messages";
 import { getActiveTab, sendToActiveTab, sendToTab } from "../shared/messages";
 import { applyProviderPreset, providerPreset, requestCustomProviderPermission } from "../shared/providers";
 import { DEFAULT_SETTINGS, loadSettings, saveSettings } from "../shared/settings";
-import type { BadgeTone, CardIdentity, ExtensionSettings, PageContext, TrackSummary, Valuation } from "../shared/types";
+import type { BadgeTone, CardIdentity, ExtensionSettings, PageContext, TrackSummary, Valuation, VideoViewport } from "../shared/types";
 import { identifyCard } from "./lib/ai";
 import { detectCardBoxes } from "./lib/detector";
 import { generateCompLinks, buildValuation, rememberValuation, stageFor } from "./lib/pricing";
@@ -34,6 +34,7 @@ function App(): JSX.Element {
   const loopRef = useRef<number | undefined>();
   const captureTabIdRef = useRef<number | undefined>();
   const lastContextPullAtRef = useRef(0);
+  const scanRunRef = useRef(0);
   const sessionCacheRef = useRef(new Map<string, Valuation>());
 
   useEffect(() => {
@@ -100,7 +101,9 @@ function App(): JSX.Element {
   }
 
   function startFromPendingCapture(capture: PendingCapture): void {
-    if (streamRef.current) return;
+    if (streamRef.current) stopScanning();
+    const runId = scanRunRef.current + 1;
+    scanRunRef.current = runId;
     setError(null);
 
     const constraints = {
@@ -117,8 +120,15 @@ function App(): JSX.Element {
 
     navigator.mediaDevices
       .getUserMedia(constraints)
-      .then((stream) => setupCapturedStream(stream, capture.targetTabId))
+      .then((stream) => {
+        if (scanRunRef.current !== runId) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+        return setupCapturedStream(stream, capture.targetTabId, runId);
+      })
       .catch((caught) => {
+        if (scanRunRef.current !== runId) return;
         setError(
           [
             caught instanceof Error ? caught.message : "Unable to start captured stream.",
@@ -129,8 +139,13 @@ function App(): JSX.Element {
       });
   }
 
-  async function setupCapturedStream(stream: MediaStream, targetTabId?: number): Promise<void> {
+  async function setupCapturedStream(stream: MediaStream, targetTabId: number | undefined, runId: number): Promise<void> {
     const tab = targetTabId ? await chrome.tabs.get(targetTabId).catch(() => undefined) : await getActiveTab();
+    if (scanRunRef.current !== runId) {
+      stream.getTracks().forEach((track) => track.stop());
+      return;
+    }
+
     if (!tab?.id) {
       stream.getTracks().forEach((track) => track.stop());
       setError("Open a Whatnot live show tab before starting CardSync.");
@@ -158,7 +173,7 @@ function App(): JSX.Element {
       cropCanvasRef.current = document.createElement("canvas");
       requestPageContext(tab.id).catch(() => undefined);
       setScanning(true);
-      scheduleLoop();
+      scheduleLoop(runId);
     } catch (caught) {
       await sendToTab(tab.id, { type: "CS_SET_SCANNING", scanning: false });
       setError(caught instanceof Error ? caught.message : "Unable to start tab capture.");
@@ -167,6 +182,7 @@ function App(): JSX.Element {
   }
 
   function stopScanning(): void {
+    scanRunRef.current += 1;
     const targetTabId = captureTabIdRef.current;
     if (loopRef.current) {
       window.clearTimeout(loopRef.current);
@@ -176,6 +192,9 @@ function App(): JSX.Element {
     streamRef.current = null;
     captureTabIdRef.current = undefined;
     videoRef.current = null;
+    contextRef.current = undefined;
+    setContext(undefined);
+    lastContextPullAtRef.current = 0;
     setScanning(false);
     setTracks([]);
     tracksRef.current = [];
@@ -188,11 +207,12 @@ function App(): JSX.Element {
     }
   }
 
-  function scheduleLoop(): void {
+  function scheduleLoop(runId: number): void {
     const cadence = settingsRef.current.scanCadenceMs;
     loopRef.current = window.setTimeout(() => {
+      if (scanRunRef.current !== runId || !streamRef.current) return;
       runScanTick();
-      scheduleLoop();
+      if (scanRunRef.current === runId && streamRef.current) scheduleLoop(runId);
     }, cadence);
   }
 
@@ -208,7 +228,17 @@ function App(): JSX.Element {
       lastContextPullAtRef.current = now;
       requestPageContext(targetTabId).catch(() => undefined);
     }
-    const detections = detectCardBoxes(video, canvas, contextRef.current?.videoViewport, currentSettings.maxTrackedCards);
+
+    const videoViewport = contextRef.current?.videoViewport;
+    if (!isUsableVideoViewport(videoViewport)) {
+      if (tracksRef.current.length) {
+        tracksRef.current = [];
+        setTracks([]);
+      }
+      return;
+    }
+
+    const detections = detectCardBoxes(video, canvas, videoViewport, currentSettings.maxTrackedCards);
     const nextTracks = updateTrackedCards(tracksRef.current, detections, now, currentSettings.maxTrackedCards);
 
     tracksRef.current = nextTracks;
@@ -387,6 +417,12 @@ function App(): JSX.Element {
       {activeTrack ? <DetailPanel track={activeTrack} /> : null}
     </main>
   );
+}
+
+function isUsableVideoViewport(viewport: VideoViewport | undefined): viewport is VideoViewport & { videoRect: NonNullable<VideoViewport["videoRect"]> } {
+  if (!viewport?.viewportWidth || !viewport.viewportHeight || !viewport.videoRect) return false;
+  const { videoRect } = viewport;
+  return videoRect.width >= 160 && videoRect.height >= 120;
 }
 
 function toSummary(track: TrackedCard): TrackSummary {

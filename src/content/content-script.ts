@@ -2,15 +2,46 @@ import type { RuntimeMessage } from "../shared/messages";
 import type { Box, PageContext, TrackSummary, VideoViewport } from "../shared/types";
 
 const OVERLAY_ID = "cardsync-overlay-root";
+const READY_ATTR = "data-cardsync-content";
 
-let root: HTMLDivElement | null = null;
-let shadow: ShadowRoot | null = null;
-let scanning = false;
-let disabled = false;
+type CardSyncContentState = {
+  root: HTMLDivElement | null;
+  shadow: ShadowRoot | null;
+  scanning: boolean;
+  disabled: boolean;
+  generation: number;
+};
+
+declare global {
+  interface Window {
+    __cardsyncContentState?: CardSyncContentState;
+  }
+}
+
+const state: CardSyncContentState = window.__cardsyncContentState ?? {
+  root: null,
+  shadow: null,
+  scanning: false,
+  disabled: false,
+  generation: 0
+};
+
+state.disabled = false;
+state.generation += 1;
+window.__cardsyncContentState = state;
+const scriptGeneration = state.generation;
+
+function markReady(): void {
+  try {
+    document.documentElement?.setAttribute(READY_ATTR, "ready");
+  } catch {
+    // The page may be navigating while Chrome injects the content script.
+  }
+}
 
 function disableContentScript(): void {
-  disabled = true;
-  scanning = false;
+  state.disabled = true;
+  state.scanning = false;
 }
 
 function isContextInvalidated(error: unknown): boolean {
@@ -18,7 +49,7 @@ function isContextInvalidated(error: unknown): boolean {
 }
 
 function sendRuntimeMessage(message: RuntimeMessage): void {
-  if (disabled) return;
+  if (state.disabled) return;
 
   try {
     chrome.runtime.sendMessage(message, () => {
@@ -39,19 +70,28 @@ function queryAll(selector: string): Element[] {
 }
 
 function ensureOverlay(): ShadowRoot | undefined {
-  if (disabled) return undefined;
-  if (shadow) return shadow;
+  if (state.disabled) return undefined;
+  if (state.shadow && state.root?.isConnected) return state.shadow;
   if (!document.documentElement) return undefined;
 
-  root = document.createElement("div");
-  root.id = OVERLAY_ID;
-  root.style.position = "fixed";
-  root.style.inset = "0";
-  root.style.zIndex = "2147483647";
-  root.style.pointerEvents = "none";
-  root.style.contain = "layout style paint";
+  const existingRoot = document.getElementById(OVERLAY_ID) as HTMLDivElement | null;
+  if (existingRoot?.shadowRoot) {
+    state.root = existingRoot;
+    state.shadow = existingRoot.shadowRoot;
+    return state.shadow;
+  }
 
-  shadow = root.attachShadow({ mode: "open" });
+  existingRoot?.remove();
+
+  state.root = document.createElement("div");
+  state.root.id = OVERLAY_ID;
+  state.root.style.position = "fixed";
+  state.root.style.inset = "0";
+  state.root.style.zIndex = "2147483647";
+  state.root.style.pointerEvents = "none";
+  state.root.style.contain = "layout style paint";
+
+  state.shadow = state.root.attachShadow({ mode: "open" });
   const style = document.createElement("style");
   style.textContent = `
     :host { all: initial; }
@@ -98,13 +138,13 @@ function ensureOverlay(): ShadowRoot | undefined {
       pointer-events: none;
     }
   `;
-  shadow.append(style);
-  document.documentElement.append(root);
-  return shadow;
+  state.shadow.append(style);
+  document.documentElement.append(state.root);
+  return state.shadow;
 }
 
 function getLargestVideoRect(): Box | undefined {
-  if (disabled) return undefined;
+  if (state.disabled) return undefined;
   const videos = queryAll("video").filter((element): element is HTMLVideoElement => element instanceof HTMLVideoElement);
   let best: Box | undefined;
   let bestArea = 0;
@@ -129,7 +169,7 @@ function getLargestVideoRect(): Box | undefined {
 }
 
 function collectAuctionText(): string {
-  if (disabled) return "";
+  if (state.disabled) return "";
   const selectors = [
     "[data-testid*='auction' i]",
     "[data-testid*='product' i]",
@@ -151,7 +191,7 @@ function collectAuctionText(): string {
 }
 
 function collectVisibleText(): string {
-  if (disabled) return "";
+  if (state.disabled) return "";
   const text = document.body?.innerText ?? "";
   return text.replace(/\s+/g, " ").trim().slice(0, 4000);
 }
@@ -175,18 +215,22 @@ function currentContext(): PageContext {
 }
 
 function renderTracks(tracks: TrackSummary[]): void {
-  if (disabled) return;
+  if (state.disabled) return;
   const target = ensureOverlay();
   if (!target) return;
+  const videoRect = getLargestVideoRect();
   target.querySelectorAll(".frame").forEach((node) => node.remove());
   target.querySelectorAll(".status").forEach((node) => node.remove());
 
   for (const track of tracks) {
+    const box = videoRect ? clampToRect(track.box, videoRect) : track.box;
+    if (!box) continue;
+
     const frame = document.createElement("div");
     frame.className = `frame ${track.badgeTone}`;
-    frame.style.transform = `translate(${track.box.x}px, ${track.box.y}px)`;
-    frame.style.width = `${track.box.width}px`;
-    frame.style.height = `${track.box.height}px`;
+    frame.style.transform = `translate(${box.x}px, ${box.y}px)`;
+    frame.style.width = `${box.width}px`;
+    frame.style.height = `${box.height}px`;
 
     const badge = document.createElement("button");
     badge.type = "button";
@@ -200,7 +244,7 @@ function renderTracks(tracks: TrackSummary[]): void {
     target.append(frame);
   }
 
-  if (scanning) {
+  if (state.scanning) {
     const status = document.createElement("div");
     status.className = "status";
     status.textContent = tracks.length ? "CardSync scanning" : "CardSync looking for cards";
@@ -208,16 +252,27 @@ function renderTracks(tracks: TrackSummary[]): void {
   }
 }
 
+function clampToRect(box: Box, bounds: Box): Box | undefined {
+  const x1 = Math.max(box.x, bounds.x);
+  const y1 = Math.max(box.y, bounds.y);
+  const x2 = Math.min(box.x + box.width, bounds.x + bounds.width);
+  const y2 = Math.min(box.y + box.height, bounds.y + bounds.height);
+  const width = Math.max(0, x2 - x1);
+  const height = Math.max(0, y2 - y1);
+  if (width < 24 || height < 24) return undefined;
+  return { x: x1, y: y1, width, height };
+}
+
 function setScanning(next: boolean): void {
-  if (disabled) return;
-  scanning = next;
+  if (state.disabled) return;
+  state.scanning = next;
   if (!next) renderTracks([]);
   else ensureOverlay();
 }
 
 try {
   chrome.runtime.onMessage.addListener((message: RuntimeMessage, _sender, sendResponse) => {
-    if (disabled) return;
+    if (state.disabled || scriptGeneration !== state.generation) return;
 
     try {
       if (message.type === "CS_GET_CONTEXT") {
@@ -246,4 +301,5 @@ try {
   if (isContextInvalidated(error)) disableContentScript();
 }
 
+markReady();
 window.addEventListener("pagehide", disableContentScript, { once: true });

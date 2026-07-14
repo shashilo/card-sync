@@ -101,22 +101,27 @@ export function detectCardBoxes(
 
   const edgeIntegral = buildIntegral(edges, analysisWidth, analysisHeight);
   const brightnessIntegral = buildIntegral(brightness, analysisWidth, analysisHeight);
-  const sx = analysisWidth / frameWidth;
-  const sy = analysisHeight / frameHeight;
-
   const viewportWidth = viewport?.viewportWidth || frameWidth;
   const viewportHeight = viewport?.viewportHeight || frameHeight;
   const videoRect = viewport?.videoRect;
-  const bounds = videoRect
+  const rawBounds = videoRect
     ? {
-        x: clamp((videoRect.x / viewportWidth) * analysisWidth, 0, analysisWidth),
-        y: clamp((videoRect.y / viewportHeight) * analysisHeight, 0, analysisHeight),
-        width: clamp((videoRect.width / viewportWidth) * analysisWidth, 1, analysisWidth),
-        height: clamp((videoRect.height / viewportHeight) * analysisHeight, 1, analysisHeight)
+        x: clamp((videoRect.x / viewportWidth) * analysisWidth, 0, analysisWidth - 1),
+        y: clamp((videoRect.y / viewportHeight) * analysisHeight, 0, analysisHeight - 1),
+        width: (videoRect.width / viewportWidth) * analysisWidth,
+        height: (videoRect.height / viewportHeight) * analysisHeight
       }
     : { x: 0, y: 0, width: analysisWidth, height: analysisHeight };
+  const bounds = {
+    x: rawBounds.x,
+    y: rawBounds.y,
+    width: clamp(rawBounds.width, 1, analysisWidth - rawBounds.x),
+    height: clamp(rawBounds.height, 1, analysisHeight - rawBounds.y)
+  };
 
   const candidates: DetectionBox[] = [];
+  const outputScaleX = viewportWidth / analysisWidth;
+  const outputScaleY = viewportHeight / analysisHeight;
   const minHeight = clamp(bounds.height * 0.26, 62, bounds.height);
   const maxHeight = clamp(bounds.height * 0.9, minHeight, bounds.height);
   const aspectRatios = [0.56, 0.63, 0.72, 0.78];
@@ -150,10 +155,10 @@ export function detectCardBoxes(
           if (score < 0.17) continue;
 
           candidates.push({
-            x: x / sx,
-            y: y / sy,
-            width: w / sx,
-            height: h / sy,
+            x: x * outputScaleX,
+            y: y * outputScaleY,
+            width: w * outputScaleX,
+            height: h * outputScaleY,
             confidence: clamp(score, 0, 0.96)
           });
         }

@@ -1,4 +1,5 @@
 import { savePendingCapture, type PendingCapture } from "../shared/capture";
+import type { RuntimeMessage } from "../shared/messages";
 
 const WHATNOT_RE = /^https:\/\/([a-z0-9-]+\.)?whatnot\.com\//i;
 
@@ -10,6 +11,29 @@ async function configureSidePanel(tabId: number, url?: string): Promise<void> {
     tabId,
     path: "sidepanel.html",
     enabled
+  });
+}
+
+function reportCaptureError(message: string): void {
+  chrome.runtime
+    .sendMessage({ type: "BG_CAPTURE_ERROR", message } satisfies RuntimeMessage)
+    .catch(() => undefined);
+}
+
+async function hasContentScript(tabId: number): Promise<boolean> {
+  try {
+    await chrome.tabs.sendMessage(tabId, { type: "CS_GET_CONTEXT" } satisfies RuntimeMessage);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function ensureContentScript(tabId: number): Promise<void> {
+  if (await hasContentScript(tabId)) return;
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ["content-script.js"]
   });
 }
 
@@ -52,14 +76,14 @@ chrome.action.onClicked.addListener((tab) => {
     return;
   }
 
+  const contentReady = ensureContentScript(tabId);
+  void contentReady.catch(() => undefined);
+
   chrome.tabCapture.getMediaStreamId({ targetTabId: tabId }, (streamId) => {
     const error = chrome.runtime.lastError;
 
     if (error || !streamId) {
-      chrome.runtime.sendMessage({
-        type: "BG_CAPTURE_ERROR",
-        message: error?.message ?? "Unable to arm tab capture."
-      });
+      reportCaptureError(error?.message ?? "Unable to arm tab capture.");
       return;
     }
 
@@ -70,8 +94,15 @@ chrome.action.onClicked.addListener((tab) => {
       createdAt: Date.now()
     };
 
-    savePendingCapture(capture).then(() => {
-      chrome.runtime.sendMessage({ type: "BG_CAPTURE_READY", capture }).catch(() => undefined);
-    });
+    contentReady
+      .then(() => savePendingCapture(capture))
+      .then(() => {
+        chrome.runtime
+          .sendMessage({ type: "BG_CAPTURE_READY", capture } satisfies RuntimeMessage)
+          .catch(() => undefined);
+      })
+      .catch((caught: unknown) => {
+        reportCaptureError(caught instanceof Error ? caught.message : "Unable to inject CardSync into this tab.");
+      });
   });
 });

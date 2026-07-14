@@ -10,13 +10,6 @@
     "service_worker": "background.js",
     "type": "module"
   },
-  "content_scripts": [
-    {
-      "matches": ["https://*.whatnot.com/*"],
-      "js": ["content-script.js"],
-      "run_at": "document_idle"
-    }
-  ],
   "host_permissions": [
     "https://*.whatnot.com/*",
     "https://api.openai.com/*",
@@ -29,7 +22,7 @@
     "http://127.0.0.1/*"
   ],
   "options_page": "options.html",
-  "permissions": ["activeTab", "sidePanel", "storage", "tabs", "tabCapture"],
+  "permissions": ["activeTab", "scripting", "sidePanel", "storage", "tabs", "tabCapture"],
   "side_panel": {
     "default_path": "sidepanel.html"
   }
