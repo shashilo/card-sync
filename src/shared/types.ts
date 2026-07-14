@@ -99,6 +99,7 @@ export interface TrackSummary {
   identity?: CardIdentity;
   valuation?: Valuation;
   compLinks: CompLink[];
+  inFlight?: boolean;
   updatedAt: number;
 }
 

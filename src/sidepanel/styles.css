@@ -377,6 +377,11 @@ h3 {
   background: #ef4444;
 }
 
+.rowSpinner {
+  color: #f59e0b;
+  align-self: center;
+}
+
 .empty {
   color: #94a3b8;
   font-size: 12px;
@@ -409,6 +414,12 @@ h3 {
 .valueBox small {
   color: #a7f3d0;
   font-size: 11px;
+}
+
+.inlineStatus {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .valueBox strong {

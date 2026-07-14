@@ -724,7 +724,7 @@ function App(): JSX.Element {
               type="button"
               onClick={() => setActiveTrackId(track.id)}
             >
-              <span className={`dot ${track.badgeTone}`} />
+              {track.inFlight ? <Loader2 size={13} className="rowSpinner spin" /> : <span className={`dot ${track.badgeTone}`} />}
               <span>
                 <strong>{track.label}</strong>
                 <small>{track.identity?.rawText || `${Math.round(track.detectionConfidence * 100)}% rectangle confidence`}</small>
@@ -801,7 +801,7 @@ function isUsableVideoViewport(viewport: VideoViewport | undefined): viewport is
 }
 
 function toSummary(track: TrackedCard): TrackSummary {
-  const { firstSeenAt: _firstSeenAt, lastSeenAt: _lastSeenAt, stableSince: _stableSince, identifyRequestedAt: _identifyRequestedAt, inFlight: _inFlight, ...summary } = track;
+  const { firstSeenAt: _firstSeenAt, lastSeenAt: _lastSeenAt, stableSince: _stableSince, identifyRequestedAt: _identifyRequestedAt, ...summary } = track;
   return summary;
 }
 
@@ -848,9 +848,12 @@ function DetailPanel({ track }: { track: TrackedCard }): JSX.Element {
         </div>
       ) : (
         <div className="valueBox muted">
-          <span>No fast value yet</span>
-          <strong>Comp search ready after identity</strong>
-          <small>Do not chase without confidence.</small>
+          <span className="inlineStatus">
+            {track.inFlight ? <Loader2 size={13} className="spin" /> : null}
+            {track.inFlight ? "Working comp lookup" : "No fast value yet"}
+          </span>
+          <strong>{track.inFlight ? "Checking identity and pricing" : "Comp search ready after identity"}</strong>
+          <small>{track.compLinks.length ? "eBay, 130 Point, and PSA APR research links are ready." : "Do not chase without confidence."}</small>
         </div>
       )}
 

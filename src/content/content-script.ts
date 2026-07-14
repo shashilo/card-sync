@@ -97,6 +97,7 @@ function ensureOverlay(): ShadowRoot | undefined {
     :host { all: initial; }
     .frame {
       position: fixed;
+      z-index: 2;
       border: 2px solid rgba(156, 163, 175, 0.95);
       box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45), 0 8px 30px rgba(0, 0, 0, 0.28);
       box-sizing: border-box;
@@ -109,6 +110,7 @@ function ensureOverlay(): ShadowRoot | undefined {
     .frame.red { border-color: rgb(239, 68, 68); }
     .captureZone {
       position: fixed;
+      z-index: 1;
       border: 0;
       padding: 0;
       margin: 0;
@@ -120,6 +122,7 @@ function ensureOverlay(): ShadowRoot | undefined {
     }
     .badge {
       position: absolute;
+      z-index: 3;
       left: 0;
       top: -34px;
       max-width: min(280px, calc(100vw - 24px));
@@ -135,11 +138,32 @@ function ensureOverlay(): ShadowRoot | undefined {
       cursor: pointer;
       user-select: none;
     }
+    .badge.loading {
+      padding-left: 28px;
+    }
+    .badge.loading::before {
+      content: "";
+      position: absolute;
+      left: 8px;
+      top: 50%;
+      width: 12px;
+      height: 12px;
+      margin-top: -6px;
+      border: 2px solid rgba(255, 255, 255, 0.35);
+      border-top-color: #fff;
+      border-radius: 999px;
+      box-sizing: border-box;
+      animation: cardsync-spin 780ms linear infinite;
+    }
+    @keyframes cardsync-spin {
+      to { transform: rotate(360deg); }
+    }
     .badge.yellow { background: rgba(146, 64, 14, 0.94); }
     .badge.green { background: rgba(6, 95, 70, 0.94); }
     .badge.red { background: rgba(127, 29, 29, 0.95); }
     .status {
       position: fixed;
+      z-index: 4;
       right: 14px;
       bottom: 14px;
       border: 0;
@@ -272,7 +296,7 @@ function renderTracks(tracks: TrackSummary[]): void {
 
     const badge = document.createElement("button");
     badge.type = "button";
-    badge.className = `badge ${track.badgeTone}`;
+    badge.className = `badge ${track.badgeTone}${track.inFlight ? " loading" : ""}`;
     badge.textContent = track.label;
     badge.title = "Capture this card now";
     badge.addEventListener("click", (event) => {
