@@ -112,8 +112,9 @@ function ensureOverlay(): ShadowRoot | undefined {
       border: 0;
       padding: 0;
       margin: 0;
-      background: transparent;
-      appearance: none;
+      background: rgba(0, 0, 0, 0);
+      box-shadow: none;
+      outline: none;
       pointer-events: auto;
       cursor: crosshair;
     }
@@ -241,8 +242,7 @@ function renderTracks(tracks: TrackSummary[]): void {
   target.querySelectorAll(".status").forEach((node) => node.remove());
 
   if (state.scanning && tracks.length && videoRect) {
-    const captureZone = document.createElement("button");
-    captureZone.type = "button";
+    const captureZone = document.createElement("div");
     captureZone.className = "captureZone";
     captureZone.title = "Capture current card";
     captureZone.style.transform = `translate(${videoRect.x}px, ${videoRect.y}px)`;
