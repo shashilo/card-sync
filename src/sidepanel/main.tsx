@@ -1,14 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { AlertTriangle, BadgeDollarSign, Crosshair, ExternalLink, Loader2, Play, Settings, Square } from "lucide-react";
+import { AlertTriangle, BadgeDollarSign, Clock3, Crosshair, ExternalLink, Loader2, Play, Settings, Square, Trash2 } from "lucide-react";
 import { consumePendingCapture, type PendingCapture } from "../shared/capture";
 import type { RuntimeMessage } from "../shared/messages";
 import { getActiveTab, sendToActiveTab, sendToTab } from "../shared/messages";
 import { applyProviderPreset, providerPreset, requestCustomProviderPermission } from "../shared/providers";
 import { DEFAULT_SETTINGS, loadSettings, saveSettings } from "../shared/settings";
-import type { BadgeTone, CardIdentity, ExtensionSettings, PageContext, TrackSummary, Valuation, VideoViewport } from "../shared/types";
+import type { BadgeTone, CardIdentity, ExtensionSettings, PageContext, ScanHistoryItem, TrackSummary, Valuation, VideoViewport } from "../shared/types";
 import { identifyCard } from "./lib/ai";
 import { detectCardBoxes } from "./lib/detector";
+import { clearShowHistory, listShowHistory, showKeyFromUrl, upsertScanHistoryItem } from "./lib/history";
 import { inferIdentityFromContext } from "./lib/identity";
 import { generateCompLinks, buildValuation, rememberValuation, stageFor } from "./lib/pricing";
 import { formatPrice, labelForTrack, updateTrackedCards, type TrackedCard } from "./lib/tracker";
@@ -24,6 +25,7 @@ function App(): JSX.Element {
   const [context, setContext] = useState<PageContext | undefined>();
   const [tracks, setTracks] = useState<TrackedCard[]>([]);
   const [activeTrackId, setActiveTrackId] = useState<string | undefined>();
+  const [historyItems, setHistoryItems] = useState<ScanHistoryItem[]>([]);
 
   const settingsRef = useRef(settings);
   const contextRef = useRef<PageContext | undefined>();
@@ -36,6 +38,9 @@ function App(): JSX.Element {
   const captureTabIdRef = useRef<number | undefined>();
   const lastContextPullAtRef = useRef(0);
   const scanRunRef = useRef(0);
+  const showKeyRef = useRef<string | undefined>();
+  const showUrlRef = useRef("");
+  const trackHistoryIdsRef = useRef(new Map<string, string>());
   const sessionCacheRef = useRef(new Map<string, Valuation>());
 
   useEffect(() => {
@@ -74,6 +79,12 @@ function App(): JSX.Element {
   useEffect(() => {
     consumePendingCapture().then((capture) => {
       if (capture) startFromPendingCapture(capture);
+    });
+  }, []);
+
+  useEffect(() => {
+    getActiveTab().then((tab) => {
+      if (tab?.url && WHATNOT_RE.test(tab.url)) loadHistoryForShow(tab.url).catch(() => undefined);
     });
   }, []);
 
@@ -160,6 +171,7 @@ function App(): JSX.Element {
     }
 
     try {
+      await loadHistoryForShow(tab.url);
       await sendToTab(tab.id, { type: "CS_SET_SCANNING", scanning: true });
       const video = document.createElement("video");
       video.muted = true;
@@ -261,6 +273,7 @@ function App(): JSX.Element {
       if (alreadyUseful || track.inFlight || recentlyRequested || stableFor < settingsRef.current.identifyStableAfterMs) continue;
 
       markTrack(track.id, { inFlight: true, identifyRequestedAt: now, stage: "candidate" });
+      const crop = cropTrack(video, track);
       const contextIdentity = inferIdentityFromContext(contextRef.current);
       const contextValuation = buildValuation(
         contextIdentity,
@@ -276,8 +289,13 @@ function App(): JSX.Element {
         stage: contextStage,
         updatedAt: Date.now()
       });
+      persistTrackHistory(track, crop, {
+        identity: contextIdentity,
+        valuation: contextValuation,
+        compLinks: generateCompLinks(contextIdentity),
+        stage: contextStage
+      }).catch(() => undefined);
 
-      const crop = cropTrack(video, track);
       if (!crop) {
         markTrack(track.id, {
           inFlight: false,
@@ -314,6 +332,12 @@ function App(): JSX.Element {
             inFlight: false,
             updatedAt: Date.now()
           });
+          persistTrackHistory(track, crop, {
+            identity,
+            valuation,
+            compLinks,
+            stage
+          }).catch(() => undefined);
         })
         .catch((caught) => {
           markTrack(track.id, {
@@ -330,6 +354,57 @@ function App(): JSX.Element {
     if (!isPageContext(response)) return;
     contextRef.current = response;
     setContext(response);
+  }
+
+  async function loadHistoryForShow(showUrl: string): Promise<void> {
+    const showKey = showKeyFromUrl(showUrl);
+    if (showKeyRef.current !== showKey) trackHistoryIdsRef.current.clear();
+    showKeyRef.current = showKey;
+    showUrlRef.current = showUrl;
+    const items = await listShowHistory(showKey);
+    setHistoryItems(items);
+  }
+
+  async function persistTrackHistory(
+    track: TrackedCard,
+    cropImageDataUrl: string | undefined,
+    patch: Pick<TrackedCard, "identity" | "valuation" | "compLinks" | "stage">
+  ): Promise<void> {
+    const showKey = showKeyRef.current;
+    if (!showKey || (!cropImageDataUrl && !trackHistoryIdsRef.current.has(track.id))) return;
+
+    const existingId = trackHistoryIdsRef.current.get(track.id);
+    const id = existingId ?? crypto.randomUUID();
+    trackHistoryIdsRef.current.set(track.id, id);
+    const item = await upsertScanHistoryItem({
+      id,
+      showKey,
+      showUrl: showUrlRef.current,
+      seenAt: Date.now(),
+      cropImageDataUrl,
+      detectionConfidence: track.detectionConfidence,
+      stage: patch.stage,
+      badgeTone: badgeToneForStage(patch.stage, patch.identity?.confidence ?? track.detectionConfidence, patch.valuation),
+      label: labelForTrack({
+        stage: patch.stage,
+        identity: patch.identity,
+        valuation: patch.valuation,
+        detectionConfidence: track.detectionConfidence
+      }),
+      identity: patch.identity,
+      valuation: patch.valuation,
+      compLinks: patch.compLinks
+    });
+
+    setHistoryItems((current) => [item, ...current.filter((candidate) => candidate.id !== item.id)].sort((a, b) => b.lastSeenAt - a.lastSeenAt));
+  }
+
+  async function clearCurrentShowHistory(): Promise<void> {
+    const showKey = showKeyRef.current;
+    if (!showKey) return;
+    await clearShowHistory(showKey);
+    trackHistoryIdsRef.current.clear();
+    setHistoryItems([]);
   }
 
   function markTrack(id: string, patch: Partial<TrackedCard>): void {
@@ -443,9 +518,18 @@ function App(): JSX.Element {
         )}
       </section>
 
+      <HistoryPanel items={historyItems} onClear={clearCurrentShowHistory} />
+
       {activeTrack ? <DetailPanel track={activeTrack} /> : null}
     </main>
   );
+}
+
+function badgeToneForStage(stage: TrackedCard["stage"], confidence: number, valuation?: Valuation): BadgeTone {
+  if (stage === "error" || stage === "no-bid") return "red";
+  if (stage === "comp-backed" && (valuation?.confidence ?? 0) >= 0.72) return "green";
+  if (stage === "candidate" || stage === "fast-value") return "yellow";
+  return confidence < 0.5 ? "red" : "gray";
 }
 
 function isUsableVideoViewport(viewport: VideoViewport | undefined): viewport is VideoViewport & { videoRect: NonNullable<VideoViewport["videoRect"]> } {
@@ -524,6 +608,62 @@ function DetailPanel({ track }: { track: TrackedCard }): JSX.Element {
       ) : null}
     </section>
   );
+}
+
+function HistoryPanel({ items, onClear }: { items: ScanHistoryItem[]; onClear: () => Promise<void> }): JSX.Element {
+  return (
+    <section className="historyPanel">
+      <div className="sectionHeader">
+        <div>
+          <h2>History</h2>
+          <p>{items.length ? `${items.length} card${items.length === 1 ? "" : "s"} saved for this show` : "Card crops save here as scans resolve."}</p>
+        </div>
+        <button className="iconButton" type="button" title="Clear show history" onClick={() => onClear().catch(() => undefined)} disabled={!items.length}>
+          <Trash2 size={16} />
+        </button>
+      </div>
+
+      {items.length ? (
+        <div className="historyList">
+          {items.map((item) => (
+            <article className="historyItem" key={item.id}>
+              <img alt={item.identity?.rawText || "Scanned card crop"} src={item.cropImageDataUrl} />
+              <div>
+                <div className="historyTitle">
+                  <span className={`dot ${item.badgeTone}`} />
+                  <strong>{item.identity?.player || item.identity?.rawText || "Card candidate"}</strong>
+                </div>
+                <p>{item.label}</p>
+                <small>
+                  <Clock3 size={12} />
+                  {formatHistoryTime(item.lastSeenAt)} · {Math.round((item.identity?.confidence ?? item.detectionConfidence) * 100)}%
+                </small>
+                {item.compLinks.length ? (
+                  <div className="miniLinks">
+                    {item.compLinks.slice(0, 3).map((link) => (
+                      <a href={link.url} key={link.url} rel="noreferrer" target="_blank">
+                        {link.source}
+                      </a>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <p className="empty">No saved scans for this show yet.</p>
+      )}
+    </section>
+  );
+}
+
+function formatHistoryTime(timestamp: number): string {
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit"
+  }).format(timestamp);
 }
 
 function IdentityFacts({ identity }: { identity: CardIdentity }): JSX.Element {

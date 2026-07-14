@@ -85,6 +85,25 @@ export interface TrackSummary {
   updatedAt: number;
 }
 
+export interface ScanHistoryItem {
+  id: string;
+  showKey: string;
+  showUrl: string;
+  firstSeenAt: number;
+  lastSeenAt: number;
+  cropImageDataUrl: string;
+  detectionConfidence: number;
+  stage: ScanStage;
+  badgeTone: BadgeTone;
+  label: string;
+  identity?: CardIdentity;
+  valuation?: Valuation;
+  compLinks: CompLink[];
+  evidence: string[];
+  warnings: string[];
+  updatedAt: number;
+}
+
 export type ProviderKind = "mock" | "openai" | "openrouter" | "anthropic" | "custom-openai-compatible";
 
 export interface ProviderSettings {
