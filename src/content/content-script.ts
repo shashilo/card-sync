@@ -108,18 +108,6 @@ function ensureOverlay(): ShadowRoot | undefined {
     .frame.yellow { border-color: rgb(245, 158, 11); }
     .frame.green { border-color: rgb(16, 185, 129); }
     .frame.red { border-color: rgb(239, 68, 68); }
-    .captureZone {
-      position: fixed;
-      z-index: 1;
-      border: 0;
-      padding: 0;
-      margin: 0;
-      background: rgba(0, 0, 0, 0);
-      box-shadow: none;
-      outline: none;
-      pointer-events: auto;
-      cursor: crosshair;
-    }
     .badge {
       position: absolute;
       z-index: 3;
@@ -261,23 +249,9 @@ function renderTracks(tracks: TrackSummary[]): void {
   const target = ensureOverlay();
   if (!target) return;
   const videoRect = getLargestVideoRect();
-  target.querySelectorAll(".captureZone").forEach((node) => node.remove());
   target.querySelectorAll(".frame").forEach((node) => node.remove());
   target.querySelectorAll(".status").forEach((node) => node.remove());
-
-  if (state.scanning && tracks.length && videoRect) {
-    const captureZone = document.createElement("div");
-    captureZone.className = "captureZone";
-    captureZone.title = "Capture current card";
-    captureZone.style.transform = `translate(${videoRect.x}px, ${videoRect.y}px)`;
-    captureZone.style.width = `${videoRect.width}px`;
-    captureZone.style.height = `${videoRect.height}px`;
-    captureZone.addEventListener("click", (event) => {
-      event.stopPropagation();
-      if (tracks[0]) requestManualCapture(tracks[0].id);
-    });
-    target.append(captureZone);
-  }
+  latestTracks = tracks;
 
   for (const track of tracks) {
     const box = videoRect ? clampToRect(track.box, videoRect) : track.box;
@@ -325,6 +299,25 @@ function renderTracks(tracks: TrackSummary[]): void {
 
 function requestManualCapture(trackId?: string): void {
   sendRuntimeMessage(trackId ? { type: "CS_MANUAL_CAPTURE", trackId } : { type: "CS_MANUAL_CAPTURE" });
+}
+
+let latestTracks: TrackSummary[] = [];
+
+function isOverlayClick(event: MouseEvent): boolean {
+  const path = event.composedPath();
+  return Boolean(state.root && path.includes(state.root));
+}
+
+function handlePageClickForManualCapture(event: MouseEvent): void {
+  if (state.disabled || !state.scanning || !latestTracks.length || isOverlayClick(event)) return;
+  const videoRect = getLargestVideoRect();
+  if (!videoRect) return;
+  const insideVideo =
+    event.clientX >= videoRect.x &&
+    event.clientX <= videoRect.x + videoRect.width &&
+    event.clientY >= videoRect.y &&
+    event.clientY <= videoRect.y + videoRect.height;
+  if (insideVideo) requestManualCapture(latestTracks[0].id);
 }
 
 function clampToRect(box: Box, bounds: Box): Box | undefined {
@@ -377,4 +370,5 @@ try {
 }
 
 markReady();
+document.addEventListener("click", handlePageClickForManualCapture, true);
 window.addEventListener("pagehide", disableContentScript, { once: true });
