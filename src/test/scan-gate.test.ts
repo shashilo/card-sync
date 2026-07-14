@@ -24,7 +24,7 @@ describe("scan gate", () => {
         new Map(),
         baseFingerprint,
         1000
-      )
+      ).shouldScan
     ).toBe(false);
   });
 
@@ -38,20 +38,34 @@ describe("scan gate", () => {
         new Map(),
         noisyFingerprint,
         1000
-      )
+      ).shouldScan
     ).toBe(false);
   });
 
-  it("starts a new scan when the visual card changes", () => {
+  it("waits for a sustained visual change before starting a new scan", () => {
     const changedFingerprint = flipBits(baseFingerprint, 18);
+    const firstDecision = shouldStartScanForFingerprint(
+      { fingerprint: baseFingerprint },
+      new Map(),
+      changedFingerprint,
+      1000
+    );
+    const secondDecision = shouldStartScanForFingerprint(
+      firstDecision.activeScan,
+      new Map(),
+      changedFingerprint,
+      1250
+    );
 
+    expect(firstDecision.shouldScan).toBe(false);
+    expect(secondDecision.shouldScan).toBe(false);
     expect(
       shouldStartScanForFingerprint(
-        { fingerprint: baseFingerprint },
+        secondDecision.activeScan,
         new Map(),
         changedFingerprint,
-        1000
-      )
+        1500
+      ).shouldScan
     ).toBe(true);
   });
 
@@ -65,7 +79,7 @@ describe("scan gate", () => {
         recent,
         flipBits(baseFingerprint, 6),
         5000
-      )
+      ).shouldScan
     ).toBe(false);
   });
 

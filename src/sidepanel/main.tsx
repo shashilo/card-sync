@@ -13,7 +13,7 @@ import { clearShowHistory, listShowHistory, showKeyFromUrl, upsertScanHistoryIte
 import { identityKey, inferIdentityFromContext } from "./lib/identity";
 import { lookupPriceGuide } from "./lib/price-guide";
 import { generateCompLinks, buildValuation, rememberValuation, stageFor } from "./lib/pricing";
-import { rememberCardFingerprint, shouldPersistScanHistory, shouldStartScanForFingerprint } from "./lib/scan-gate";
+import { rememberCardFingerprint, shouldPersistScanHistory, shouldStartScanForFingerprint, type ActiveScanFingerprint } from "./lib/scan-gate";
 import { formatPrice, labelForTrack, updateTrackedCards, type TrackedCard } from "./lib/tracker";
 import "./styles.css";
 
@@ -24,9 +24,8 @@ interface CropSnapshot {
   fingerprint: string;
 }
 
-interface ActiveScan {
+interface ActiveScan extends ActiveScanFingerprint {
   signature: string;
-  fingerprint: string;
 }
 
 function App(): JSX.Element {
@@ -309,7 +308,9 @@ function App(): JSX.Element {
       const contextIdentity = inferIdentityFromContext(contextRef.current);
       const signature = scanSignature(contextIdentity, track, crop);
       const activeScan = activeScansRef.current.get(track.id);
-      if (!shouldStartScanForFingerprint(activeScan, recentCardFingerprintsRef.current, crop.fingerprint, now)) continue;
+      const scanDecision = shouldStartScanForFingerprint(activeScan, recentCardFingerprintsRef.current, crop.fingerprint, now);
+      if (scanDecision.activeScan && activeScan) activeScansRef.current.set(track.id, { ...activeScan, ...scanDecision.activeScan });
+      if (!scanDecision.shouldScan) continue;
       if (hasRecentScanSignature(recentScanSignaturesRef.current, signature, now)) {
         continue;
       }

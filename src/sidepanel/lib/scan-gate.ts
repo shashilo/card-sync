@@ -2,6 +2,13 @@ import type { ScanStage } from "../../shared/types";
 
 export interface ActiveScanFingerprint {
   fingerprint: string;
+  pendingFingerprint?: string;
+  pendingCount?: number;
+}
+
+export interface ScanFingerprintDecision {
+  shouldScan: boolean;
+  activeScan?: ActiveScanFingerprint;
 }
 
 export function hammingDistance(a: string, b: string): number {
@@ -22,9 +29,25 @@ export function shouldStartScanForFingerprint(
   recentFingerprints: Map<string, number>,
   fingerprint: string,
   now: number
-): boolean {
-  if (activeScan && sameCardFingerprint(activeScan.fingerprint, fingerprint)) return false;
-  return !hasRecentCardFingerprint(recentFingerprints, fingerprint, now);
+): ScanFingerprintDecision {
+  if (activeScan && sameCardFingerprint(activeScan.fingerprint, fingerprint)) {
+    return { shouldScan: false, activeScan: { ...activeScan, pendingFingerprint: undefined, pendingCount: 0 } };
+  }
+
+  if (activeScan) {
+    const samePending = activeScan.pendingFingerprint && sameCardFingerprint(activeScan.pendingFingerprint, fingerprint);
+    const pendingCount = samePending ? (activeScan.pendingCount ?? 0) + 1 : 1;
+    const nextActiveScan = {
+      ...activeScan,
+      pendingFingerprint: fingerprint,
+      pendingCount
+    };
+    if (pendingCount < 3) return { shouldScan: false, activeScan: nextActiveScan };
+  }
+
+  if (hasRecentCardFingerprint(recentFingerprints, fingerprint, now)) return { shouldScan: false, activeScan };
+
+  return { shouldScan: true };
 }
 
 export function hasRecentCardFingerprint(fingerprints: Map<string, number>, fingerprint: string, now: number): boolean {
