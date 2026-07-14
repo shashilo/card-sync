@@ -76,7 +76,7 @@ export interface PriceGuideQuote {
   warnings: string[];
 }
 
-export type PriceLookupStatus = "idle" | "pending" | "ready" | "no-match" | "proxy-offline" | "missing-token" | "error";
+export type PriceLookupStatus = "idle" | "pending" | "ready" | "manual-ready" | "no-match" | "proxy-offline" | "missing-token" | "error";
 
 export interface PriceLookupState {
   status: PriceLookupStatus;

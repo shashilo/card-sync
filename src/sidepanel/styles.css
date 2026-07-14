@@ -303,6 +303,11 @@ h3 {
   color: #bbf7d0;
 }
 
+.priceStatus.manual-ready {
+  border-color: rgba(59, 130, 246, 0.45);
+  color: #bfdbfe;
+}
+
 .priceStatus.no-match,
 .priceStatus.proxy-offline,
 .priceStatus.missing-token,

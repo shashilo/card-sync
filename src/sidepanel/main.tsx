@@ -364,7 +364,9 @@ function App(): JSX.Element {
     rememberScanSignature(recentScanSignaturesRef.current, signature, now);
     rememberCardFingerprint(recentCardFingerprintsRef.current, crop.fingerprint, now);
     activeScansRef.current.set(track.id, { signature, fingerprint: crop.fingerprint, requestId });
-    const pendingPriceLookup = priceLookupState("pending", "Checking SportsCardsPro.");
+    const pendingPriceLookup = settingsRef.current.priceGuideProxyUrl.trim()
+      ? priceLookupState("pending", "Checking SportsCardsPro.")
+      : priceLookupState("manual-ready", "Open eBay, 130 Point, and PSA APR research links.");
     markTrack(track.id, { inFlight: true, identifyRequestedAt: now, stage: "candidate", priceLookup: pendingPriceLookup });
 
     const contextValuation = buildValuation(
@@ -477,9 +479,11 @@ function App(): JSX.Element {
   }
 
   async function applyPriceGuide(trackId: string, track: TrackedCard, crop: string, identity: CardIdentity, signature?: string, requestId?: string): Promise<void> {
-    markTrack(trackId, {
-      priceLookup: priceLookupState("pending", "Checking SportsCardsPro.")
-    });
+    if (settingsRef.current.priceGuideProxyUrl.trim()) {
+      markTrack(trackId, {
+        priceLookup: priceLookupState("pending", "Checking SportsCardsPro.")
+      });
+    }
     const result = await lookupPriceGuide(identity, settingsRef.current.priceGuideProxyUrl);
     if (signature && !isCurrentScan(trackId, signature, requestId)) return;
     if (result.status !== "ready" || !result.quote) {
@@ -740,7 +744,7 @@ function App(): JSX.Element {
       <section className="hudGrid">
         <Metric label="Tracked" value={tracks.length.toString()} />
         <Metric label="Session values" value={sessionCacheRef.current.size.toString()} />
-        <Metric label="Pricing" value={settings.priceGuideProxyUrl.trim() ? "Guide" : "Links"} />
+        <Metric label="Pricing" value={settings.priceGuideProxyUrl.trim() ? "Guide" : "Manual"} />
       </section>
 
       <section className="trackList">
@@ -1060,7 +1064,7 @@ function SettingsPanel({
           onChange={(event) => setDraft({ ...draft, priceGuideProxyUrl: event.target.value })}
           placeholder="http://127.0.0.1:8787/v1/price-guide/lookup"
         />
-        <span className="helper">CardSync proxy endpoint for SportsCardsPro values. Leave blank to use manual comp links only.</span>
+        <span className="helper">Leave blank for free manual comp mode. Add a proxy URL only for optional paid/source-backed pricing.</span>
       </label>
       <label>
         API key

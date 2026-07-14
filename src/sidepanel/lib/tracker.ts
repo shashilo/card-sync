@@ -67,6 +67,7 @@ export function labelForTrack(track: Pick<TrackSummary, "stage" | "identity" | "
 
 export function priceLookupLabel(priceLookup: PriceLookupState): string {
   if (priceLookup.status === "ready") return "Price-backed";
+  if (priceLookup.status === "manual-ready") return "Manual comps ready";
   if (priceLookup.status === "pending") return "Checking SportsCardsPro";
   if (priceLookup.status === "no-match") return "No confident price match";
   if (priceLookup.status === "proxy-offline") return "Price proxy offline";

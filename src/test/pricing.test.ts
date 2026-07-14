@@ -7,6 +7,7 @@ import {
   selectSportsCardsProPrice
 } from "../shared/price-guide";
 import type { CardIdentity, Valuation } from "../shared/types";
+import { DEFAULT_SETTINGS, normalizePriceGuideProxyUrl } from "../shared/settings";
 import { identityKey, inferIdentityFromContext } from "../sidepanel/lib/identity";
 import { lookupPriceGuide } from "../sidepanel/lib/price-guide";
 import { buildValuation, generateCompLinks, stageFor } from "../sidepanel/lib/pricing";
@@ -24,6 +25,15 @@ const jordan: CardIdentity = {
 };
 
 describe("pricing pipeline", () => {
+  it("defaults to free manual comp mode", () => {
+    expect(DEFAULT_SETTINGS.priceGuideProxyUrl).toBe("");
+  });
+
+  it("migrates the old localhost proxy default to free manual mode", () => {
+    expect(normalizePriceGuideProxyUrl("http://127.0.0.1:8787/v1/price-guide/lookup")).toBe("");
+    expect(normalizePriceGuideProxyUrl("https://proxy.example/v1/price-guide/lookup")).toBe("https://proxy.example/v1/price-guide/lookup");
+  });
+
   it("generates source links from normalized card identity", () => {
     const links = generateCompLinks(jordan);
     expect(links).toHaveLength(3);
@@ -191,6 +201,18 @@ describe("pricing pipeline", () => {
 
     expect(result.status).toBe("missing-token");
     expect(result.message).toContain("token");
+    vi.unstubAllGlobals();
+  });
+
+  it("uses manual-ready mode without calling a price proxy when the URL is blank", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await lookupPriceGuide(jordan, "");
+
+    expect(result.status).toBe("manual-ready");
+    expect(result.message).toContain("eBay");
+    expect(fetchMock).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
   });
 

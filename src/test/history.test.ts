@@ -110,6 +110,25 @@ describe("scan history", () => {
     expect(item.priceLookup?.message).toContain("price");
   });
 
+  it("keeps manual comp links on manual-ready history rows", () => {
+    const item = buildScanHistoryItem({
+      ...baseInput,
+      priceLookup: {
+        status: "manual-ready",
+        message: "Open eBay, 130 Point, and PSA APR research links.",
+        updatedAt: 1200
+      },
+      compLinks: [
+        { source: "eBay sold", label: "eBay sold search", url: "https://www.ebay.com" },
+        { source: "130 Point", label: "130 Point sales search", url: "https://130point.com" },
+        { source: "PSA APR", label: "PSA auction prices", url: "https://www.psacard.com" }
+      ]
+    });
+
+    expect(item.priceLookup?.status).toBe("manual-ready");
+    expect(item.compLinks.map((link) => link.source)).toEqual(["eBay sold", "130 Point", "PSA APR"]);
+  });
+
   it("keeps show-scoped records separate by key", () => {
     const showA = buildScanHistoryItem(baseInput);
     const showB = buildScanHistoryItem({

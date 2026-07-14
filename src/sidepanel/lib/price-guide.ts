@@ -14,8 +14,8 @@ export async function lookupPriceGuide(identity: CardIdentity, proxyUrl: string)
   const { query } = buildPriceGuideQuery(identity);
   if (!endpoint) {
     return {
-      status: "proxy-offline",
-      message: "Price guide proxy URL is not configured."
+      status: "manual-ready",
+      message: "Open eBay, 130 Point, and PSA APR research links."
     };
   }
   if (!query || identity.confidence < 0.5) {
@@ -84,6 +84,7 @@ function messageForStatus(status: PriceLookupStatus): string {
   if (status === "no-match") return "SportsCardsPro did not return a confident product match.";
   if (status === "proxy-offline") return "Price proxy is offline or unreachable.";
   if (status === "ready") return "SportsCardsPro price is ready.";
+  if (status === "manual-ready") return "Manual comp links are ready.";
   if (status === "pending") return "Checking SportsCardsPro.";
   if (status === "idle") return "SportsCardsPro lookup has not started.";
   return "SportsCardsPro lookup failed.";
