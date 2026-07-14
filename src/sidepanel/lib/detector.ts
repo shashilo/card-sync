@@ -83,25 +83,6 @@ function centerBonus(
   return clamp(1 - Math.hypot(nx, ny), 0, 1);
 }
 
-function centerFallback(
-  bounds: { x: number; y: number; width: number; height: number },
-  outputScaleX: number,
-  outputScaleY: number
-): DetectionBox {
-  const height = clamp(bounds.height * 0.58, Math.min(96, bounds.height), bounds.height * 0.9);
-  const width = Math.min(bounds.width * 0.54, height * 0.72);
-  const x = bounds.x + (bounds.width - width) / 2;
-  const y = bounds.y + (bounds.height - height) / 2;
-
-  return {
-    x: x * outputScaleX,
-    y: y * outputScaleY,
-    width: width * outputScaleX,
-    height: height * outputScaleY,
-    confidence: 0.38
-  };
-}
-
 export function detectCardBoxes(
   video: HTMLVideoElement,
   canvas: HTMLCanvasElement,
@@ -213,6 +194,5 @@ export function detectCardBoxes(
     }
   }
 
-  const picked = nonMaxSuppress(candidates, maxBoxes);
-  return picked.length ? picked : [centerFallback(bounds, outputScaleX, outputScaleY)];
+  return nonMaxSuppress(candidates, maxBoxes);
 }

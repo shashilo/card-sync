@@ -10,7 +10,7 @@ import type { BadgeTone, CardIdentity, ExtensionSettings, PageContext, ScanHisto
 import { identifyCard } from "./lib/ai";
 import { detectCardBoxes } from "./lib/detector";
 import { clearShowHistory, listShowHistory, showKeyFromUrl, upsertScanHistoryItem } from "./lib/history";
-import { inferIdentityFromContext } from "./lib/identity";
+import { identityKey, inferIdentityFromContext } from "./lib/identity";
 import { generateCompLinks, buildValuation, rememberValuation, stageFor } from "./lib/pricing";
 import { formatPrice, labelForTrack, updateTrackedCards, type TrackedCard } from "./lib/tracker";
 import "./styles.css";
@@ -41,6 +41,8 @@ function App(): JSX.Element {
   const showKeyRef = useRef<string | undefined>();
   const showUrlRef = useRef("");
   const trackHistoryIdsRef = useRef(new Map<string, string>());
+  const scannedTrackIdsRef = useRef(new Set<string>());
+  const recentScanSignaturesRef = useRef(new Map<string, number>());
   const sessionCacheRef = useRef(new Map<string, Valuation>());
 
   useEffect(() => {
@@ -211,6 +213,7 @@ function App(): JSX.Element {
     setScanning(false);
     setTracks([]);
     tracksRef.current = [];
+    scannedTrackIdsRef.current.clear();
     if (targetTabId) {
       sendToTab(targetTabId, { type: "CS_SET_SCANNING", scanning: false }).catch(() => undefined);
       sendToTab(targetTabId, { type: "CS_CLEAR_OVERLAY" }).catch(() => undefined);
@@ -269,12 +272,23 @@ function App(): JSX.Element {
       const stableFor = now - (track.stableSince ?? track.firstSeenAt);
       const alreadyUseful = track.identity && track.valuation?.source && track.valuation.source !== "none";
       const recentlyRequested = track.identifyRequestedAt && now - track.identifyRequestedAt < 7000;
+      const alreadyScanned = scannedTrackIdsRef.current.has(track.id);
 
-      if (alreadyUseful || track.inFlight || recentlyRequested || stableFor < settingsRef.current.identifyStableAfterMs) continue;
+      if (alreadyUseful || alreadyScanned || track.inFlight || recentlyRequested || stableFor < settingsRef.current.identifyStableAfterMs) continue;
 
-      markTrack(track.id, { inFlight: true, identifyRequestedAt: now, stage: "candidate" });
       const crop = cropTrack(video, track);
+      if (!crop) continue;
+
       const contextIdentity = inferIdentityFromContext(contextRef.current);
+      const signature = scanSignature(contextIdentity, track, crop);
+      if (hasRecentScanSignature(recentScanSignaturesRef.current, signature, now)) {
+        scannedTrackIdsRef.current.add(track.id);
+        continue;
+      }
+
+      rememberScanSignature(recentScanSignaturesRef.current, signature, now);
+      scannedTrackIdsRef.current.add(track.id);
+      markTrack(track.id, { inFlight: true, identifyRequestedAt: now, stage: "candidate" });
       const contextValuation = buildValuation(
         contextIdentity,
         sessionCacheRef.current,
@@ -295,17 +309,6 @@ function App(): JSX.Element {
         compLinks: generateCompLinks(contextIdentity),
         stage: contextStage
       }).catch(() => undefined);
-
-      if (!crop) {
-        markTrack(track.id, {
-          inFlight: false,
-          label:
-            contextValuation.source === "none"
-              ? "Comp search ready · crop too small"
-              : undefined
-        });
-        continue;
-      }
 
       const provider = settingsRef.current.provider;
       if (provider.provider === "mock" || !provider.apiKey.trim()) {
@@ -358,7 +361,11 @@ function App(): JSX.Element {
 
   async function loadHistoryForShow(showUrl: string): Promise<void> {
     const showKey = showKeyFromUrl(showUrl);
-    if (showKeyRef.current !== showKey) trackHistoryIdsRef.current.clear();
+    if (showKeyRef.current !== showKey) {
+      trackHistoryIdsRef.current.clear();
+      scannedTrackIdsRef.current.clear();
+      recentScanSignaturesRef.current.clear();
+    }
     showKeyRef.current = showKey;
     showUrlRef.current = showUrl;
     const items = await listShowHistory(showKey);
@@ -530,6 +537,37 @@ function badgeToneForStage(stage: TrackedCard["stage"], confidence: number, valu
   if (stage === "comp-backed" && (valuation?.confidence ?? 0) >= 0.72) return "green";
   if (stage === "candidate" || stage === "fast-value") return "yellow";
   return confidence < 0.5 ? "red" : "gray";
+}
+
+function scanSignature(identity: CardIdentity, track: TrackedCard, cropImageDataUrl: string): string {
+  const key = identityKey(identity);
+  if (key && identity.confidence >= 0.5) return `identity:${key}`;
+  return [
+    `crop:${hashString(cropImageDataUrl)}`,
+    Math.round(track.box.width / 25),
+    Math.round(track.box.height / 25)
+  ].join("|");
+}
+
+function hashString(value: string): string {
+  let hash = 5381;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 33) ^ value.charCodeAt(index);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function hasRecentScanSignature(signatures: Map<string, number>, signature: string, now: number): boolean {
+  const lastSeenAt = signature ? signatures.get(signature) : undefined;
+  return Boolean(lastSeenAt && now - lastSeenAt < 45_000);
+}
+
+function rememberScanSignature(signatures: Map<string, number>, signature: string, now: number): void {
+  if (!signature) return;
+  signatures.set(signature, now);
+  for (const [key, seenAt] of signatures) {
+    if (now - seenAt > 90_000) signatures.delete(key);
+  }
 }
 
 function isUsableVideoViewport(viewport: VideoViewport | undefined): viewport is VideoViewport & { videoRect: NonNullable<VideoViewport["videoRect"]> } {
