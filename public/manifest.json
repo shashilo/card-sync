@@ -12,6 +12,7 @@
   },
   "host_permissions": [
     "https://*.whatnot.com/*",
+    "https://www.ebay.com/*",
     "https://api.openai.com/*",
     "https://openrouter.ai/*",
     "https://api.anthropic.com/*"

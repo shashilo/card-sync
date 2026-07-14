@@ -308,7 +308,19 @@ h3 {
   color: #bfdbfe;
 }
 
+.priceStatus.free-comps-pending {
+  border-color: rgba(245, 158, 11, 0.48);
+  color: #fde68a;
+}
+
+.priceStatus.free-comps-ready {
+  border-color: rgba(16, 185, 129, 0.48);
+  color: #bbf7d0;
+}
+
 .priceStatus.no-match,
+.priceStatus.no-free-comps,
+.priceStatus.needs-identity,
 .priceStatus.proxy-offline,
 .priceStatus.missing-token,
 .priceStatus.error {
@@ -498,12 +510,14 @@ h3 {
   line-height: 1.4;
 }
 
-.links {
+.links,
+.freeComps {
   display: grid;
   gap: 7px;
 }
 
-.links a {
+.links a,
+.freeComps a {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -515,4 +529,30 @@ h3 {
   font-weight: 700;
   padding: 0 9px;
   text-decoration: none;
+}
+
+.freeComps a {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  min-height: 42px;
+  align-items: center;
+  padding: 7px 9px;
+}
+
+.freeComps strong {
+  color: #bbf7d0;
+  font-size: 12px;
+}
+
+.freeComps span {
+  overflow: hidden;
+  color: #dbeafe;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.freeComps small {
+  grid-column: 2;
+  color: #94a3b8;
+  font-size: 10px;
 }

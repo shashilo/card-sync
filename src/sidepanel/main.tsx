@@ -12,6 +12,7 @@ import { detectCardBoxes } from "./lib/detector";
 import { clearShowHistory, listShowHistory, showKeyFromUrl, upsertScanHistoryItem } from "./lib/history";
 import { identityKey, inferIdentityFromContext } from "./lib/identity";
 import { lookupPriceGuide, type PriceGuideLookupResult } from "./lib/price-guide";
+import { lookupFreeComps, valuationFromFreeComps } from "./lib/free-comps";
 import { generateCompLinks, buildValuation, rememberValuation, stageFor } from "./lib/pricing";
 import { rememberCardFingerprint, shouldPersistScanHistory, shouldStartScanForFingerprint, type ActiveScanFingerprint } from "./lib/scan-gate";
 import { formatPrice, labelForTrack, priceLookupLabel, updateTrackedCards, type TrackedCard } from "./lib/tracker";
@@ -366,7 +367,7 @@ function App(): JSX.Element {
     activeScansRef.current.set(track.id, { signature, fingerprint: crop.fingerprint, requestId });
     const pendingPriceLookup = settingsRef.current.priceGuideProxyUrl.trim()
       ? priceLookupState("pending", "Checking SportsCardsPro.")
-      : priceLookupState("manual-ready", "Open eBay, 130 Point, and PSA APR research links.");
+      : priceLookupState("free-comps-pending", "Fetching eBay sold comps.");
     markTrack(track.id, { inFlight: true, identifyRequestedAt: now, stage: "candidate", priceLookup: pendingPriceLookup });
 
     const contextValuation = buildValuation(
@@ -479,6 +480,11 @@ function App(): JSX.Element {
   }
 
   async function applyPriceGuide(trackId: string, track: TrackedCard, crop: string, identity: CardIdentity, signature?: string, requestId?: string): Promise<void> {
+    if (!settingsRef.current.priceGuideProxyUrl.trim()) {
+      await applyFreeComps(trackId, track, crop, identity, signature, requestId);
+      return;
+    }
+
     if (settingsRef.current.priceGuideProxyUrl.trim()) {
       markTrack(trackId, {
         priceLookup: priceLookupState("pending", "Checking SportsCardsPro.")
@@ -497,6 +503,7 @@ function App(): JSX.Element {
         identity,
         valuation: tracksRef.current.find((candidate) => candidate.id === trackId)?.valuation,
         compLinks: generateCompLinks(identity),
+        freeComps: tracksRef.current.find((candidate) => candidate.id === trackId)?.freeComps,
         stage: tracksRef.current.find((candidate) => candidate.id === trackId)?.stage ?? "candidate",
         priceLookup: priceLookupState(nextStatus, result.message)
       }, signature);
@@ -524,6 +531,38 @@ function App(): JSX.Element {
       identity,
       valuation,
       compLinks,
+      freeComps: undefined,
+      stage,
+      priceLookup
+    }, signature);
+  }
+
+  async function applyFreeComps(trackId: string, track: TrackedCard, crop: string, identity: CardIdentity, signature?: string, requestId?: string): Promise<void> {
+    const compLinks = generateCompLinks(identity);
+    markTrack(trackId, {
+      priceLookup: priceLookupState("free-comps-pending", "Fetching eBay sold comps.")
+    });
+    const result = await lookupFreeComps(identity, compLinks);
+    if (signature && !isCurrentScan(trackId, signature, requestId)) return;
+
+    const valuation = result.comps.length ? valuationFromFreeComps(identity, result.comps) : tracksRef.current.find((candidate) => candidate.id === trackId)?.valuation;
+    const stage = valuation ? stageFor(identity, valuation) : tracksRef.current.find((candidate) => candidate.id === trackId)?.stage ?? "candidate";
+    const priceLookup = priceLookupState(result.status, result.message);
+    markTrack(trackId, {
+      identity,
+      valuation,
+      compLinks,
+      freeComps: result.comps,
+      stage,
+      inFlight: false,
+      priceLookup,
+      updatedAt: Date.now()
+    });
+    await persistTrackHistory(track, crop, {
+      identity,
+      valuation,
+      compLinks,
+      freeComps: result.comps,
       stage,
       priceLookup
     }, signature);
@@ -603,7 +642,7 @@ function App(): JSX.Element {
   async function persistTrackHistory(
     track: TrackedCard,
     cropImageDataUrl: string | undefined,
-    patch: Pick<TrackedCard, "identity" | "valuation" | "compLinks" | "stage"> & { priceLookup?: PriceLookupState },
+    patch: Pick<TrackedCard, "identity" | "valuation" | "compLinks" | "stage"> & { freeComps?: TrackedCard["freeComps"]; priceLookup?: PriceLookupState },
     signature?: string
   ): Promise<void> {
     const showKey = showKeyRef.current;
@@ -633,6 +672,7 @@ function App(): JSX.Element {
       identity: patch.identity,
       valuation: patch.valuation,
       compLinks: patch.compLinks,
+      freeComps: patch.freeComps,
       priceLookup: patch.priceLookup
     });
 
@@ -902,6 +942,7 @@ function DetailPanel({ track }: { track: TrackedCard }): JSX.Element {
 
       {track.identity ? <IdentityFacts identity={track.identity} /> : null}
       {track.valuation ? <ValuationNotes valuation={track.valuation} /> : null}
+      {track.freeComps?.length ? <FreeCompsPanel comps={track.freeComps} /> : null}
 
       {track.compLinks.length ? (
         <div className="links">
@@ -920,6 +961,7 @@ function DetailPanel({ track }: { track: TrackedCard }): JSX.Element {
 
 function valuationTitle(valuation: Valuation): string {
   if (valuation.source === "price-guide" || valuation.priceGuideQuote) return "Price-backed Fast Value";
+  if (valuation.source === "free-comps") return "Best-effort Free Comps";
   if (valuation.source === "ai-estimate") return "Provisional Fast Value";
   if (valuation.source === "seeded-demo") return "Demo Fast Value";
   if (valuation.source === "session-cache") return "Cached Fast Value";
@@ -955,6 +997,7 @@ function HistoryPanel({ items, onClear }: { items: ScanHistoryItem[]; onClear: (
                   {formatHistoryTime(item.lastSeenAt)} · {Math.round((item.identity?.confidence ?? item.detectionConfidence) * 100)}%
                 </small>
                 {item.priceLookup ? <small className={`priceStatus ${item.priceLookup.status}`}>{priceLookupLabel(item.priceLookup)}</small> : null}
+                {item.freeComps?.length ? <p>{item.freeComps.length} eBay sold comp{item.freeComps.length === 1 ? "" : "s"} captured</p> : null}
                 {item.compLinks.length ? (
                   <div className="miniLinks">
                     {item.compLinks.slice(0, 3).map((link) => (
@@ -981,6 +1024,21 @@ function formatHistoryTime(timestamp: number): string {
     minute: "2-digit",
     second: "2-digit"
   }).format(timestamp);
+}
+
+function FreeCompsPanel({ comps }: { comps: NonNullable<TrackedCard["freeComps"]> }): JSX.Element {
+  return (
+    <div className="freeComps">
+      <h3>Free Comps</h3>
+      {comps.slice(0, 5).map((comp) => (
+        <a href={comp.url} key={`${comp.title}-${comp.price}-${comp.url}`} rel="noreferrer" target="_blank">
+          <strong>{formatPrice(comp.price)}</strong>
+          <span>{comp.title}</span>
+          {comp.soldDate ? <small>{comp.soldDate}</small> : null}
+        </a>
+      ))}
+    </div>
+  );
 }
 
 function IdentityFacts({ identity }: { identity: CardIdentity }): JSX.Element {

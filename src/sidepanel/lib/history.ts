@@ -1,4 +1,4 @@
-import type { BadgeTone, CardIdentity, CompLink, PriceLookupState, ScanHistoryItem, ScanStage, Valuation } from "../../shared/types";
+import type { BadgeTone, CardIdentity, CompLink, PriceLookupState, ScanHistoryItem, ScanStage, SoldComp, Valuation } from "../../shared/types";
 
 const DB_NAME = "cardsync-scan-history";
 const STORE_NAME = "scanHistory";
@@ -17,6 +17,7 @@ export interface HistoryUpsertInput {
   identity?: CardIdentity;
   valuation?: Valuation;
   compLinks: CompLink[];
+  freeComps?: SoldComp[];
   priceLookup?: PriceLookupState;
 }
 
@@ -50,6 +51,7 @@ export function buildScanHistoryItem(input: HistoryUpsertInput, existing?: ScanH
     identity: input.identity ?? existing?.identity,
     valuation: input.valuation ?? existing?.valuation,
     compLinks: input.compLinks.length ? input.compLinks : existing?.compLinks ?? [],
+    freeComps: input.freeComps?.length ? input.freeComps : existing?.freeComps,
     priceLookup: input.priceLookup ?? existing?.priceLookup,
     evidence: [...identityEvidence, ...valuationReasons].slice(0, 8),
     warnings: valuationWarnings.slice(0, 8),

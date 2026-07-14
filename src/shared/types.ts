@@ -60,6 +60,14 @@ export interface CompLink {
   url: string;
 }
 
+export interface SoldComp {
+  source: "eBay sold";
+  title: string;
+  price: number;
+  url: string;
+  soldDate?: string;
+}
+
 export type CompProvider = "sportscardspro" | "manual-links" | "demo";
 
 export interface PriceGuideQuote {
@@ -76,7 +84,19 @@ export interface PriceGuideQuote {
   warnings: string[];
 }
 
-export type PriceLookupStatus = "idle" | "pending" | "ready" | "manual-ready" | "no-match" | "proxy-offline" | "missing-token" | "error";
+export type PriceLookupStatus =
+  | "idle"
+  | "pending"
+  | "ready"
+  | "manual-ready"
+  | "free-comps-pending"
+  | "free-comps-ready"
+  | "no-free-comps"
+  | "needs-identity"
+  | "no-match"
+  | "proxy-offline"
+  | "missing-token"
+  | "error";
 
 export interface PriceLookupState {
   status: PriceLookupStatus;
@@ -90,7 +110,7 @@ export interface Valuation {
   maxBid: number;
   currency: "USD";
   confidence: number;
-  source: "session-cache" | "seeded-demo" | "price-guide" | "ai-estimate" | "none";
+  source: "session-cache" | "seeded-demo" | "price-guide" | "free-comps" | "ai-estimate" | "none";
   compCount: number;
   reasons: string[];
   warnings: string[];
@@ -107,6 +127,7 @@ export interface TrackSummary {
   identity?: CardIdentity;
   valuation?: Valuation;
   compLinks: CompLink[];
+  freeComps?: SoldComp[];
   inFlight?: boolean;
   priceLookup?: PriceLookupState;
   updatedAt: number;
@@ -126,6 +147,7 @@ export interface ScanHistoryItem {
   identity?: CardIdentity;
   valuation?: Valuation;
   compLinks: CompLink[];
+  freeComps?: SoldComp[];
   priceLookup?: PriceLookupState;
   evidence: string[];
   warnings: string[];
