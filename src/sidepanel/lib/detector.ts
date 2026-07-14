@@ -70,6 +70,49 @@ function nonMaxSuppress(candidates: DetectionBox[], limit: number): DetectionBox
   return picked;
 }
 
+function centerFocus(bounds: { x: number; y: number; width: number; height: number }): { x: number; y: number; width: number; height: number } {
+  const width = bounds.width * 0.76;
+  const height = bounds.height * 0.86;
+  return {
+    x: bounds.x + (bounds.width - width) / 2,
+    y: bounds.y + (bounds.height - height) / 2,
+    width,
+    height
+  };
+}
+
+function centerBonus(
+  box: { x: number; y: number; width: number; height: number },
+  bounds: { x: number; y: number; width: number; height: number }
+): number {
+  const boxCx = box.x + box.width / 2;
+  const boxCy = box.y + box.height / 2;
+  const boundsCx = bounds.x + bounds.width / 2;
+  const boundsCy = bounds.y + bounds.height / 2;
+  const nx = Math.abs(boxCx - boundsCx) / Math.max(1, bounds.width / 2);
+  const ny = Math.abs(boxCy - boundsCy) / Math.max(1, bounds.height / 2);
+  return clamp(1 - Math.hypot(nx, ny), 0, 1);
+}
+
+function centerFallback(
+  bounds: { x: number; y: number; width: number; height: number },
+  outputScaleX: number,
+  outputScaleY: number
+): DetectionBox {
+  const height = clamp(bounds.height * 0.58, Math.min(96, bounds.height), bounds.height * 0.9);
+  const width = Math.min(bounds.width * 0.54, height * 0.72);
+  const x = bounds.x + (bounds.width - width) / 2;
+  const y = bounds.y + (bounds.height - height) / 2;
+
+  return {
+    x: x * outputScaleX,
+    y: y * outputScaleY,
+    width: width * outputScaleX,
+    height: height * outputScaleY,
+    confidence: 0.38
+  };
+}
+
 export function detectCardBoxes(
   video: HTMLVideoElement,
   canvas: HTMLCanvasElement,
@@ -132,18 +175,19 @@ export function detectCardBoxes(
   const candidates: DetectionBox[] = [];
   const outputScaleX = viewportWidth / analysisWidth;
   const outputScaleY = viewportHeight / analysisHeight;
-  const minHeight = clamp(bounds.height * 0.26, 62, bounds.height);
-  const maxHeight = clamp(bounds.height * 0.9, minHeight, bounds.height);
+  const searchBounds = centerFocus(bounds);
+  const minHeight = clamp(searchBounds.height * 0.3, 62, searchBounds.height);
+  const maxHeight = clamp(searchBounds.height * 0.92, minHeight, searchBounds.height);
   const aspectRatios = [0.56, 0.63, 0.72, 0.78];
 
   for (let h = minHeight; h <= maxHeight; h += Math.max(14, h * 0.16)) {
     for (const ratio of aspectRatios) {
       const w = h * ratio;
-      if (w > bounds.width * 0.86) continue;
+      if (w > searchBounds.width * 0.9) continue;
       const step = Math.max(10, Math.round(Math.min(w, h) * 0.18));
 
-      for (let y = bounds.y; y <= bounds.y + bounds.height - h; y += step) {
-        for (let x = bounds.x; x <= bounds.x + bounds.width - w; x += step) {
+      for (let y = searchBounds.y; y <= searchBounds.y + searchBounds.height - h; y += step) {
+        for (let x = searchBounds.x; x <= searchBounds.x + searchBounds.width - w; x += step) {
           const border = Math.max(3, Math.round(Math.min(w, h) * 0.055));
           const top = rectSum(edgeIntegral, x, y, w, border);
           const bottom = rectSum(edgeIntegral, x, y + h - border, w, border);
@@ -160,9 +204,13 @@ export function detectCardBoxes(
           const innerBrightness = rectSum(brightnessIntegral, innerX, innerY, innerW, innerH) / (innerW * innerH);
           const outerBrightness = rectSum(brightnessIntegral, x, y, w, h) / (w * h);
           const contrast = Math.abs(innerBrightness - outerBrightness);
-          const score = borderDensity * 0.74 + innerEdges * 0.2 + contrast * 0.18;
+          const score =
+            borderDensity * 0.7 +
+            innerEdges * 0.18 +
+            contrast * 0.16 +
+            centerBonus({ x, y, width: w, height: h }, searchBounds) * 0.1;
 
-          if (score < 0.17) continue;
+          if (score < 0.18) continue;
 
           candidates.push({
             x: x * outputScaleX,
@@ -176,5 +224,6 @@ export function detectCardBoxes(
     }
   }
 
-  return nonMaxSuppress(candidates, maxBoxes);
+  const picked = nonMaxSuppress(candidates, maxBoxes);
+  return picked.length ? picked : [centerFallback(searchBounds, outputScaleX, outputScaleY)];
 }

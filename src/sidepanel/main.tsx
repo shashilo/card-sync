@@ -9,6 +9,7 @@ import { DEFAULT_SETTINGS, loadSettings, saveSettings } from "../shared/settings
 import type { BadgeTone, CardIdentity, ExtensionSettings, PageContext, TrackSummary, Valuation, VideoViewport } from "../shared/types";
 import { identifyCard } from "./lib/ai";
 import { detectCardBoxes } from "./lib/detector";
+import { inferIdentityFromContext } from "./lib/identity";
 import { generateCompLinks, buildValuation, rememberValuation, stageFor } from "./lib/pricing";
 import { formatPrice, labelForTrack, updateTrackedCards, type TrackedCard } from "./lib/tracker";
 import "./styles.css";
@@ -254,14 +255,42 @@ function App(): JSX.Element {
 
     for (const track of currentTracks) {
       const stableFor = now - (track.stableSince ?? track.firstSeenAt);
-      const alreadyUseful = track.identity && track.valuation;
+      const alreadyUseful = track.identity && track.valuation?.source && track.valuation.source !== "none";
       const recentlyRequested = track.identifyRequestedAt && now - track.identifyRequestedAt < 7000;
 
       if (alreadyUseful || track.inFlight || recentlyRequested || stableFor < settingsRef.current.identifyStableAfterMs) continue;
 
       markTrack(track.id, { inFlight: true, identifyRequestedAt: now, stage: "candidate" });
+      const contextIdentity = inferIdentityFromContext(contextRef.current);
+      const contextValuation = buildValuation(
+        contextIdentity,
+        sessionCacheRef.current,
+        undefined,
+        settingsRef.current.allowAiEstimatedValues
+      );
+      const contextStage = stageFor(contextIdentity, contextValuation);
+      markTrack(track.id, {
+        identity: contextIdentity,
+        valuation: contextValuation,
+        compLinks: generateCompLinks(contextIdentity),
+        stage: contextStage,
+        updatedAt: Date.now()
+      });
+
       const crop = cropTrack(video, track);
       if (!crop) {
+        markTrack(track.id, {
+          inFlight: false,
+          label:
+            contextValuation.source === "none"
+              ? "Comp search ready · crop too small"
+              : undefined
+        });
+        continue;
+      }
+
+      const provider = settingsRef.current.provider;
+      if (provider.provider === "mock" || !provider.apiKey.trim()) {
         markTrack(track.id, { inFlight: false });
         continue;
       }

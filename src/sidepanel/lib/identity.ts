@@ -45,6 +45,7 @@ export function inferIdentityFromContext(context?: PageContext): CardIdentity {
   const year = source.match(/\b(19[5-9][0-9]|20[0-3][0-9])\b/)?.[1];
   const grade = source.match(/\b(psa|bgs|sgc|cgc)\s*(10|9\.5|9|8\.5|8|7\.5|7)\b/i);
   const possiblePlayer = context?.auctionText?.split(/[|·,-]/)[0]?.replace(/\s+/g, " ").trim();
+  const hasStructuredAuctionText = Boolean(possiblePlayer && (year || grade));
 
   return {
     year,
@@ -52,7 +53,7 @@ export function inferIdentityFromContext(context?: PageContext): CardIdentity {
     grade: grade?.[2],
     rawText: context?.auctionText || context?.title || "Visible sports card",
     player: possiblePlayer && possiblePlayer.length < 60 ? possiblePlayer : undefined,
-    confidence: possiblePlayer ? 0.42 : 0.28,
+    confidence: hasStructuredAuctionText ? 0.54 : possiblePlayer ? 0.42 : 0.28,
     evidence: ["No AI provider configured; using visible page text only."],
     alternatives: []
   };
