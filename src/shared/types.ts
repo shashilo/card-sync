@@ -76,6 +76,14 @@ export interface PriceGuideQuote {
   warnings: string[];
 }
 
+export type PriceLookupStatus = "idle" | "pending" | "ready" | "no-match" | "proxy-offline" | "missing-token" | "error";
+
+export interface PriceLookupState {
+  status: PriceLookupStatus;
+  message: string;
+  updatedAt: number;
+}
+
 export interface Valuation {
   low: number;
   high: number;
@@ -100,6 +108,7 @@ export interface TrackSummary {
   valuation?: Valuation;
   compLinks: CompLink[];
   inFlight?: boolean;
+  priceLookup?: PriceLookupState;
   updatedAt: number;
 }
 
@@ -117,6 +126,7 @@ export interface ScanHistoryItem {
   identity?: CardIdentity;
   valuation?: Valuation;
   compLinks: CompLink[];
+  priceLookup?: PriceLookupState;
   evidence: string[];
   warnings: string[];
   updatedAt: number;

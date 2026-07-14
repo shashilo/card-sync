@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildPriceGuideQuery,
   buildPriceGuideQuote,
@@ -8,6 +8,7 @@ import {
 } from "../shared/price-guide";
 import type { CardIdentity, Valuation } from "../shared/types";
 import { identityKey, inferIdentityFromContext } from "../sidepanel/lib/identity";
+import { lookupPriceGuide } from "../sidepanel/lib/price-guide";
 import { buildValuation, generateCompLinks, stageFor } from "../sidepanel/lib/pricing";
 
 const jordan: CardIdentity = {
@@ -35,6 +36,12 @@ describe("pricing pipeline", () => {
     expect(valuation.source).toBe("seeded-demo");
     expect(valuation.low).toBeGreaterThan(0);
     expect(stageFor(jordan, valuation)).toBe("fast-value");
+  });
+
+  it("suppresses demo and AI values when only source-backed pricing is allowed", () => {
+    const valuation = buildValuation(jordan, new Map(), { low: 1, high: 2 }, false);
+    expect(valuation.source).toBe("none");
+    expect(valuation.maxBid).toBe(0);
   });
 
   it("reuses session values before weaker estimates", () => {
@@ -163,5 +170,42 @@ describe("pricing pipeline", () => {
     expect(valuation.low).toBe(1917);
     expect(valuation.maxBid).toBe(1917);
     expect(valuation.high).toBe(2593);
+  });
+
+  it("reports missing-token lookup failures from the price proxy", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json(
+          {
+            ok: false,
+            status: "missing-token",
+            error: "SportsCardsPro token is not configured."
+          },
+          { status: 500 }
+        )
+      )
+    );
+
+    const result = await lookupPriceGuide(jordan, "https://proxy.test/v1/price-guide/lookup");
+
+    expect(result.status).toBe("missing-token");
+    expect(result.message).toContain("token");
+    vi.unstubAllGlobals();
+  });
+
+  it("reports proxy connectivity failures from the price proxy", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("failed to fetch");
+      })
+    );
+
+    const result = await lookupPriceGuide({ ...jordan, cardNumber: "58" }, "https://offline.test/v1/price-guide/lookup");
+
+    expect(result.status).toBe("proxy-offline");
+    expect(result.message).toContain("offline");
+    vi.unstubAllGlobals();
   });
 });

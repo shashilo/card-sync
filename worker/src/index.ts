@@ -44,7 +44,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
   }
 
   if (!env.SPORTSCARDSPRO_TOKEN?.trim()) {
-    return json({ ok: false, error: "SportsCardsPro token is not configured." }, 500, corsHeaders);
+    return json({ ok: false, status: "missing-token", error: "SportsCardsPro token is not configured." }, 500, corsHeaders);
   }
 
   const body = (await request.json().catch(() => undefined)) as Partial<PriceGuideLookupRequest> | undefined;
@@ -72,7 +72,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     const ranked = rankPriceGuideCandidates(body.identity, [fastProductResponse]);
     const top = ranked[0];
     const quote = buildPriceGuideQuote(body.identity, query, top, fastProductResponse);
-    const response = { ok: true, quote } satisfies PriceGuideLookupResponse;
+    const response = { ok: true, status: "ready", quote } satisfies PriceGuideLookupResponse;
     await putCached(cacheKey, response, cacheTtlSeconds(env));
     return json(response, 200, corsHeaders);
   }
@@ -85,14 +85,14 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
   const productsResponse = await providerJson(productsUrl);
   if (!isSuccess(productsResponse)) {
     const error = stringValue(productsResponse["error-message"]) || "SportsCardsPro product search failed.";
-    return json({ ok: false, error }, 502, corsHeaders);
+    return json({ ok: false, status: "error", error }, 502, corsHeaders);
   }
 
   const products = Array.isArray(productsResponse.products) ? productsResponse.products : [];
   const ranked = rankPriceGuideCandidates(body.identity, products);
   const top = ranked[0];
   if (!top?.product.id) {
-    const response = { ok: true } satisfies PriceGuideLookupResponse;
+    const response = { ok: true, status: "no-match", error: "SportsCardsPro did not return a matching product." } satisfies PriceGuideLookupResponse;
     await putCached(cacheKey, response, cacheTtlSeconds(env));
     return json(response, 200, corsHeaders);
   }
@@ -104,11 +104,11 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
   const productResponse = await providerJson(productUrl);
   if (!isSuccess(productResponse)) {
     const error = stringValue(productResponse["error-message"]) || "SportsCardsPro product lookup failed.";
-    return json({ ok: false, error }, 502, corsHeaders);
+    return json({ ok: false, status: "error", error }, 502, corsHeaders);
   }
 
   const quote = buildPriceGuideQuote(body.identity, query, top, productResponse);
-  const response = { ok: true, quote } satisfies PriceGuideLookupResponse;
+  const response = { ok: true, status: "ready", quote } satisfies PriceGuideLookupResponse;
   await putCached(cacheKey, response, cacheTtlSeconds(env));
   return json(response, 200, corsHeaders);
 }

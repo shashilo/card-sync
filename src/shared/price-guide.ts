@@ -1,4 +1,4 @@
-import type { CardIdentity, PriceGuideQuote } from "./types";
+import type { CardIdentity, PriceGuideQuote, PriceLookupStatus } from "./types";
 
 export const PRICE_GUIDE_PROXY_DEFAULT_URL = "http://127.0.0.1:8787/v1/price-guide/lookup";
 export const PRICE_GUIDE_MIN_CONFIDENCE = 0.65;
@@ -10,6 +10,7 @@ export interface PriceGuideLookupRequest {
 
 export interface PriceGuideLookupResponse {
   ok: boolean;
+  status?: PriceLookupStatus;
   quote?: PriceGuideQuote;
   error?: string;
 }

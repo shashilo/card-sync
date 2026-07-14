@@ -96,6 +96,20 @@ describe("scan history", () => {
     expect(updated.compLinks).toHaveLength(1);
   });
 
+  it("preserves price lookup status on history rows", () => {
+    const item = buildScanHistoryItem({
+      ...baseInput,
+      priceLookup: {
+        status: "no-match",
+        message: "No confident price match",
+        updatedAt: 1200
+      }
+    });
+
+    expect(item.priceLookup?.status).toBe("no-match");
+    expect(item.priceLookup?.message).toContain("price");
+  });
+
   it("keeps show-scoped records separate by key", () => {
     const showA = buildScanHistoryItem(baseInput);
     const showB = buildScanHistoryItem({

@@ -277,6 +277,40 @@ h3 {
   font-size: 11px;
 }
 
+.trackRow .priceStatus,
+.historyItem .priceStatus,
+.valueBox .priceStatus {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  min-height: 20px;
+  margin-top: 5px;
+  border: 1px solid #334155;
+  border-radius: 999px;
+  color: #cbd5e1;
+  font-size: 10px;
+  font-weight: 800;
+  padding: 0 7px;
+}
+
+.priceStatus.pending {
+  border-color: rgba(245, 158, 11, 0.48);
+  color: #fde68a;
+}
+
+.priceStatus.ready {
+  border-color: rgba(16, 185, 129, 0.48);
+  color: #bbf7d0;
+}
+
+.priceStatus.no-match,
+.priceStatus.proxy-offline,
+.priceStatus.missing-token,
+.priceStatus.error {
+  border-color: rgba(239, 68, 68, 0.42);
+  color: #fecaca;
+}
+
 .sectionHeader {
   display: flex;
   align-items: center;

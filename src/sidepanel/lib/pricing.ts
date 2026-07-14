@@ -55,7 +55,7 @@ export function buildValuation(
 
   const searchable = `${identitySearchText(identity)} ${identity.rawText}`.toLowerCase();
   const seeded = DEMO_CATALOG.find((entry) => entry.keywords.every((keyword) => searchable.includes(keyword.toLowerCase())));
-  if (seeded) return seeded.valuation;
+  if (allowAiEstimate && seeded) return seeded.valuation;
 
   if (allowAiEstimate && aiEstimate?.low && aiEstimate?.high) {
     const low = Math.max(1, Math.min(aiEstimate.low, aiEstimate.high));

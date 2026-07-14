@@ -1,4 +1,4 @@
-import type { BadgeTone, Box, DetectionBox, ScanStage, TrackSummary } from "../../shared/types";
+import type { BadgeTone, Box, DetectionBox, PriceLookupState, ScanStage, TrackSummary } from "../../shared/types";
 
 export interface TrackedCard extends TrackSummary {
   firstSeenAt: number;
@@ -49,7 +49,7 @@ export function badgeTone(stage: ScanStage, confidence: number): BadgeTone {
   return "gray";
 }
 
-export function labelForTrack(track: Pick<TrackSummary, "stage" | "identity" | "valuation" | "detectionConfidence">): string {
+export function labelForTrack(track: Pick<TrackSummary, "stage" | "identity" | "valuation" | "detectionConfidence" | "priceLookup">): string {
   const identityConfidence = track.identity?.confidence ?? track.detectionConfidence;
 
   if (track.stage === "no-bid") return `No-bid signal · ${Math.round(identityConfidence * 100)}%`;
@@ -58,9 +58,21 @@ export function labelForTrack(track: Pick<TrackSummary, "stage" | "identity" | "
       track.valuation.maxBid
     )} · ${Math.round(track.valuation.confidence * 100)}%`;
   }
+  if (track.priceLookup?.status === "pending") return `Checking SportsCardsPro · ${Math.round(identityConfidence * 100)}%`;
+  if (track.priceLookup && track.priceLookup.status !== "idle") return priceLookupLabel(track.priceLookup);
   if (track.identity?.player) return `${track.identity.player} candidate · ${Math.round(identityConfidence * 100)}%`;
   if (track.stage === "candidate") return `Candidate · ${Math.round(identityConfidence * 100)}%`;
   return "Detecting card";
+}
+
+export function priceLookupLabel(priceLookup: PriceLookupState): string {
+  if (priceLookup.status === "ready") return "Price-backed";
+  if (priceLookup.status === "pending") return "Checking SportsCardsPro";
+  if (priceLookup.status === "no-match") return "No confident price match";
+  if (priceLookup.status === "proxy-offline") return "Price proxy offline";
+  if (priceLookup.status === "missing-token") return "SportsCardsPro token missing";
+  if (priceLookup.status === "error") return "SportsCardsPro error";
+  return "SportsCardsPro idle";
 }
 
 export function updateTrackedCards(previous: TrackedCard[], detections: DetectionBox[], now: number, maxTracks: number): TrackedCard[] {

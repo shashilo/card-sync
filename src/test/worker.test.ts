@@ -32,6 +32,7 @@ describe("comp proxy worker", () => {
     expect(response.status).toBe(500);
     await expect(response.json()).resolves.toMatchObject({
       ok: false,
+      status: "missing-token",
       error: "SportsCardsPro token is not configured."
     });
   });
@@ -128,6 +129,79 @@ describe("comp proxy worker", () => {
       }
     });
     expect(fetchMock).toHaveBeenCalledTimes(3);
+    vi.unstubAllGlobals();
+  });
+
+  it("returns no-match when SportsCardsPro has no ranked product", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      const parsed = new URL(url);
+      if (parsed.pathname === "/api/product" && parsed.searchParams.has("q")) {
+        return Response.json({
+          status: "error",
+          "error-message": "No product found"
+        });
+      }
+
+      return Response.json({
+        status: "success",
+        products: []
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await handleRequest(
+      new Request("https://cardsync.test/v1/price-guide/lookup?nomatch=1", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({ identity, query: "no match jordan unique" })
+      }),
+      env
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      status: "no-match"
+    });
+    vi.unstubAllGlobals();
+  });
+
+  it("returns provider errors with a visible status", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      const parsed = new URL(url);
+      if (parsed.pathname === "/api/product" && parsed.searchParams.has("q")) {
+        return Response.json({
+          status: "error",
+          "error-message": "No product found"
+        });
+      }
+
+      return Response.json({
+        status: "error",
+        "error-message": "Provider unavailable"
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await handleRequest(
+      new Request("https://cardsync.test/v1/price-guide/lookup?provider-error=1", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({ identity, query: "provider error jordan unique" })
+      }),
+      env
+    );
+
+    expect(response.status).toBe(502);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      status: "error",
+      error: "Provider unavailable"
+    });
     vi.unstubAllGlobals();
   });
 });

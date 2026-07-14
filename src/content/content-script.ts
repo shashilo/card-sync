@@ -270,7 +270,7 @@ function renderTracks(tracks: TrackSummary[]): void {
 
     const badge = document.createElement("button");
     badge.type = "button";
-    badge.className = `badge ${track.badgeTone}${track.inFlight ? " loading" : ""}`;
+    badge.className = `badge ${track.badgeTone}${track.inFlight || track.priceLookup?.status === "pending" ? " loading" : ""}`;
     badge.textContent = track.label;
     badge.title = "Capture this card now";
     badge.addEventListener("click", (event) => {

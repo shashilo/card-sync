@@ -6,15 +6,15 @@ import type { RuntimeMessage } from "../shared/messages";
 import { getActiveTab, sendToActiveTab, sendToTab } from "../shared/messages";
 import { applyProviderPreset, providerPreset, requestCustomProviderPermission } from "../shared/providers";
 import { DEFAULT_SETTINGS, loadSettings, saveSettings } from "../shared/settings";
-import type { BadgeTone, CardIdentity, ExtensionSettings, PageContext, ScanHistoryItem, TrackSummary, Valuation, VideoViewport } from "../shared/types";
+import type { BadgeTone, CardIdentity, ExtensionSettings, PageContext, PriceLookupState, ScanHistoryItem, TrackSummary, Valuation, VideoViewport } from "../shared/types";
 import { identifyCard, identifySlabLabel } from "./lib/ai";
 import { detectCardBoxes } from "./lib/detector";
 import { clearShowHistory, listShowHistory, showKeyFromUrl, upsertScanHistoryItem } from "./lib/history";
 import { identityKey, inferIdentityFromContext } from "./lib/identity";
-import { lookupPriceGuide } from "./lib/price-guide";
+import { lookupPriceGuide, type PriceGuideLookupResult } from "./lib/price-guide";
 import { generateCompLinks, buildValuation, rememberValuation, stageFor } from "./lib/pricing";
 import { rememberCardFingerprint, shouldPersistScanHistory, shouldStartScanForFingerprint, type ActiveScanFingerprint } from "./lib/scan-gate";
-import { formatPrice, labelForTrack, updateTrackedCards, type TrackedCard } from "./lib/tracker";
+import { formatPrice, labelForTrack, priceLookupLabel, updateTrackedCards, type TrackedCard } from "./lib/tracker";
 import "./styles.css";
 
 const WHATNOT_RE = /^https:\/\/([a-z0-9-]+\.)?whatnot\.com\//i;
@@ -364,13 +364,14 @@ function App(): JSX.Element {
     rememberScanSignature(recentScanSignaturesRef.current, signature, now);
     rememberCardFingerprint(recentCardFingerprintsRef.current, crop.fingerprint, now);
     activeScansRef.current.set(track.id, { signature, fingerprint: crop.fingerprint, requestId });
-    markTrack(track.id, { inFlight: true, identifyRequestedAt: now, stage: "candidate" });
+    const pendingPriceLookup = priceLookupState("pending", "Checking SportsCardsPro.");
+    markTrack(track.id, { inFlight: true, identifyRequestedAt: now, stage: "candidate", priceLookup: pendingPriceLookup });
 
     const contextValuation = buildValuation(
       contextIdentity,
       sessionCacheRef.current,
       undefined,
-      settingsRef.current.allowAiEstimatedValues
+      false
     );
     const contextStage = stageFor(contextIdentity, contextValuation);
     const contextCompLinks = generateCompLinks(contextIdentity);
@@ -379,13 +380,15 @@ function App(): JSX.Element {
       valuation: contextValuation,
       compLinks: contextCompLinks,
       stage: contextStage,
+      priceLookup: pendingPriceLookup,
       updatedAt: Date.now()
     });
     persistTrackHistory(track, crop.dataUrl, {
       identity: contextIdentity,
       valuation: contextValuation,
       compLinks: contextCompLinks,
-      stage: contextStage
+      stage: contextStage,
+      priceLookup: pendingPriceLookup
     }, signature).catch(() => undefined);
     applyPriceGuide(track.id, track, crop.dataUrl, contextIdentity, signature, requestId).catch(() => undefined);
 
@@ -404,7 +407,7 @@ function App(): JSX.Element {
             identity,
             sessionCacheRef.current,
             estimate,
-            settingsRef.current.allowAiEstimatedValues
+            false
           );
           const compLinks = generateCompLinks(identity);
           rememberValuation(identity, valuation, sessionCacheRef.current);
@@ -435,7 +438,7 @@ function App(): JSX.Element {
           identity,
           sessionCacheRef.current,
           estimate,
-          settingsRef.current.allowAiEstimatedValues
+          false
         );
         const compLinks = generateCompLinks(identity);
         rememberValuation(identity, valuation, sessionCacheRef.current);
@@ -474,30 +477,51 @@ function App(): JSX.Element {
   }
 
   async function applyPriceGuide(trackId: string, track: TrackedCard, crop: string, identity: CardIdentity, signature?: string, requestId?: string): Promise<void> {
-    const quote = await lookupPriceGuide(identity, settingsRef.current.priceGuideProxyUrl);
+    markTrack(trackId, {
+      priceLookup: priceLookupState("pending", "Checking SportsCardsPro.")
+    });
+    const result = await lookupPriceGuide(identity, settingsRef.current.priceGuideProxyUrl);
     if (signature && !isCurrentScan(trackId, signature, requestId)) return;
-    if (!quote) {
-      markTrack(trackId, { inFlight: false, updatedAt: Date.now() });
+    if (result.status !== "ready" || !result.quote) {
+      const nextStatus = result.status === "ready" ? "no-match" : result.status;
+      markTrack(trackId, {
+        inFlight: false,
+        priceLookup: priceLookupState(nextStatus, result.message),
+        updatedAt: Date.now()
+      });
+      await persistTrackHistory(track, undefined, {
+        identity,
+        valuation: tracksRef.current.find((candidate) => candidate.id === trackId)?.valuation,
+        compLinks: generateCompLinks(identity),
+        stage: tracksRef.current.find((candidate) => candidate.id === trackId)?.stage ?? "candidate",
+        priceLookup: priceLookupState(nextStatus, result.message)
+      }, signature);
       return;
     }
 
-    const valuation = buildValuation(identity, sessionCacheRef.current, undefined, settingsRef.current.allowAiEstimatedValues, quote);
+    const valuation = buildValuation(identity, sessionCacheRef.current, undefined, settingsRef.current.allowAiEstimatedValues, result.quote);
     const compLinks = generateCompLinks(identity);
     rememberValuation(identity, valuation, sessionCacheRef.current);
     const stage = stageFor(identity, valuation);
+    const priceLookup =
+      valuation.source === "price-guide"
+        ? priceLookupState("ready", `SportsCardsPro ${result.quote.selectedCondition} price is ready.`)
+        : priceLookupState("no-match", valuation.reasons[0] || "SportsCardsPro match was not confident enough to price.");
     markTrack(trackId, {
       identity,
       valuation,
       compLinks,
       stage,
       inFlight: false,
+      priceLookup,
       updatedAt: Date.now()
     });
     await persistTrackHistory(track, crop, {
       identity,
       valuation,
       compLinks,
-      stage
+      stage,
+      priceLookup
     }, signature);
   }
 
@@ -519,15 +543,15 @@ function App(): JSX.Element {
     if (recent && now - recent < 20_000) return;
     contextPrewarmRef.current.set(key, now);
 
-    const quote = await lookupPriceGuide(identity, settingsRef.current.priceGuideProxyUrl);
-    if (!quote) return;
+    const result = await lookupPriceGuide(identity, settingsRef.current.priceGuideProxyUrl);
+    if (result.status !== "ready" || !result.quote) return;
 
-    const valuation = buildValuation(identity, sessionCacheRef.current, undefined, settingsRef.current.allowAiEstimatedValues, quote);
+    const valuation = buildValuation(identity, sessionCacheRef.current, undefined, settingsRef.current.allowAiEstimatedValues, result.quote);
     rememberValuation(identity, valuation, sessionCacheRef.current);
-    applyPrewarmedValuationToCurrentTracks(identity, valuation);
+    applyPrewarmedValuationToCurrentTracks(identity, valuation, result);
   }
 
-  function applyPrewarmedValuationToCurrentTracks(identity: CardIdentity, valuation: Valuation): void {
+  function applyPrewarmedValuationToCurrentTracks(identity: CardIdentity, valuation: Valuation, lookup: PriceGuideLookupResult): void {
     const key = identityKey(identity);
     if (!key || valuation.source === "none") return;
 
@@ -537,19 +561,22 @@ function App(): JSX.Element {
 
       const compLinks = generateCompLinks(identity);
       const stage = stageFor(identity, valuation);
+      const priceLookup = priceLookupState("ready", lookup.message);
       markTrack(track.id, {
         identity,
         valuation,
         compLinks,
         stage,
         inFlight: false,
+        priceLookup,
         updatedAt: Date.now()
       });
       persistTrackHistory(track, undefined, {
         identity,
         valuation,
         compLinks,
-        stage
+        stage,
+        priceLookup
       }).catch(() => undefined);
     }
   }
@@ -572,7 +599,7 @@ function App(): JSX.Element {
   async function persistTrackHistory(
     track: TrackedCard,
     cropImageDataUrl: string | undefined,
-    patch: Pick<TrackedCard, "identity" | "valuation" | "compLinks" | "stage">,
+    patch: Pick<TrackedCard, "identity" | "valuation" | "compLinks" | "stage"> & { priceLookup?: PriceLookupState },
     signature?: string
   ): Promise<void> {
     const showKey = showKeyRef.current;
@@ -596,11 +623,13 @@ function App(): JSX.Element {
         stage: patch.stage,
         identity: patch.identity,
         valuation: patch.valuation,
+        priceLookup: patch.priceLookup,
         detectionConfidence: track.detectionConfidence
       }),
       identity: patch.identity,
       valuation: patch.valuation,
-      compLinks: patch.compLinks
+      compLinks: patch.compLinks,
+      priceLookup: patch.priceLookup
     });
 
     setHistoryItems((current) => [item, ...current.filter((candidate) => candidate.id !== item.id)].sort((a, b) => b.lastSeenAt - a.lastSeenAt));
@@ -728,6 +757,7 @@ function App(): JSX.Element {
               <span>
                 <strong>{track.label}</strong>
                 <small>{track.identity?.rawText || `${Math.round(track.detectionConfidence * 100)}% rectangle confidence`}</small>
+                {track.priceLookup ? <small className={`priceStatus ${track.priceLookup.status}`}>{priceLookupLabel(track.priceLookup)}</small> : null}
               </span>
             </button>
           ))
@@ -748,6 +778,14 @@ function badgeToneForStage(stage: TrackedCard["stage"], confidence: number, valu
   if (stage === "comp-backed" && (valuation?.confidence ?? 0) >= 0.72) return "green";
   if (stage === "candidate" || stage === "fast-value") return "yellow";
   return confidence < 0.5 ? "red" : "gray";
+}
+
+function priceLookupState(status: PriceLookupState["status"], message: string): PriceLookupState {
+  return {
+    status,
+    message,
+    updatedAt: Date.now()
+  };
 }
 
 function scanSignature(identity: CardIdentity, track: TrackedCard, crop: CropSnapshot): string {
@@ -845,15 +883,16 @@ function DetailPanel({ track }: { track: TrackedCard }): JSX.Element {
             {formatPrice(track.valuation.low)}-{formatPrice(track.valuation.high)}
           </strong>
           <small>Suggested max bid: {formatPrice(track.valuation.maxBid)}</small>
+          {track.priceLookup ? <small className={`priceStatus ${track.priceLookup.status}`}>{track.priceLookup.message}</small> : null}
         </div>
       ) : (
         <div className="valueBox muted">
           <span className="inlineStatus">
-            {track.inFlight ? <Loader2 size={13} className="spin" /> : null}
-            {track.inFlight ? "Working comp lookup" : "No fast value yet"}
+            {track.inFlight || track.priceLookup?.status === "pending" ? <Loader2 size={13} className="spin" /> : null}
+            {track.priceLookup ? priceLookupLabel(track.priceLookup) : track.inFlight ? "Working comp lookup" : "No fast value yet"}
           </span>
-          <strong>{track.inFlight ? "Checking identity and pricing" : "Comp search ready after identity"}</strong>
-          <small>{track.compLinks.length ? "eBay, 130 Point, and PSA APR research links are ready." : "Do not chase without confidence."}</small>
+          <strong>{track.priceLookup?.message || (track.inFlight ? "Checking identity and pricing" : "Comp search ready after identity")}</strong>
+          <small>{track.compLinks.length ? "eBay, 130 Point, and PSA APR are manual research links." : "Do not chase without confidence."}</small>
         </div>
       )}
 
@@ -911,6 +950,7 @@ function HistoryPanel({ items, onClear }: { items: ScanHistoryItem[]; onClear: (
                   <Clock3 size={12} />
                   {formatHistoryTime(item.lastSeenAt)} · {Math.round((item.identity?.confidence ?? item.detectionConfidence) * 100)}%
                 </small>
+                {item.priceLookup ? <small className={`priceStatus ${item.priceLookup.status}`}>{priceLookupLabel(item.priceLookup)}</small> : null}
                 {item.compLinks.length ? (
                   <div className="miniLinks">
                     {item.compLinks.slice(0, 3).map((link) => (
