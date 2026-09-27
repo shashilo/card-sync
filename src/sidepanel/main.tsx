@@ -1113,7 +1113,11 @@ function SettingsPanel({
           <option value="anthropic">Anthropic Claude</option>
           <option value="custom-openai-compatible">Custom OpenAI-compatible</option>
         </select>
-        <span className="helper">{preset.help}</span>
+        <span className="helper">
+          {draft.provider.provider === "mock"
+            ? "Page text only; it cannot identify cards from video or reliably find comps. Choose a vision provider and add its API key to identify cards and search comps."
+            : preset.help}
+        </span>
       </label>
       <label>
         Price guide proxy

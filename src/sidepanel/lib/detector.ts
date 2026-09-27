@@ -118,12 +118,28 @@ function expandBox(
   };
 }
 
-export function buildDetectionScanPlan(analysisWidth: number, analysisHeight: number): DetectionScanPlan {
+export function buildDetectionScanPlan(
+  analysisWidth: number,
+  analysisHeight: number,
+  viewportRect?: Box,
+  viewportWidth = analysisWidth,
+  viewportHeight = analysisHeight
+): DetectionScanPlan {
+  const scaleX = analysisWidth / Math.max(1, viewportWidth);
+  const scaleY = analysisHeight / Math.max(1, viewportHeight);
+  const left = viewportRect ? clamp(viewportRect.x * scaleX, 0, analysisWidth) : 0;
+  const top = viewportRect ? clamp(viewportRect.y * scaleY, 0, analysisHeight) : 0;
+  const right = viewportRect
+    ? clamp((viewportRect.x + viewportRect.width) * scaleX, left, analysisWidth)
+    : analysisWidth;
+  const bottom = viewportRect
+    ? clamp((viewportRect.y + viewportRect.height) * scaleY, top, analysisHeight)
+    : analysisHeight;
   const searchBounds = {
-    x: 0,
-    y: 0,
-    width: analysisWidth,
-    height: analysisHeight
+    x: left,
+    y: top,
+    width: Math.max(1, right - left),
+    height: Math.max(1, bottom - top)
   };
   const minHeight = clamp(searchBounds.height * 0.3, 76, searchBounds.height);
   const maxHeight = clamp(searchBounds.height * 0.98, minHeight, searchBounds.height);
@@ -183,7 +199,13 @@ export function detectCardBoxes(
   const candidates: DetectionBox[] = [];
   const outputScaleX = viewportWidth / analysisWidth;
   const outputScaleY = viewportHeight / analysisHeight;
-  const { searchBounds, minHeight, maxHeight, aspectRatios } = buildDetectionScanPlan(analysisWidth, analysisHeight);
+  const { searchBounds, minHeight, maxHeight, aspectRatios } = buildDetectionScanPlan(
+    analysisWidth,
+    analysisHeight,
+    viewport?.videoRect,
+    viewportWidth,
+    viewportHeight
+  );
 
   for (let h = minHeight; h <= maxHeight; h += Math.max(14, h * 0.16)) {
     for (const ratio of aspectRatios) {
