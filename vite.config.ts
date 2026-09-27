@@ -1,12 +1,26 @@
+import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
 const rootDir = fileURLToPath(new URL(".", import.meta.url));
+const packageJson = JSON.parse(await readFile(resolve(rootDir, "package.json"), "utf8"));
+
+function syncExtensionVersion() {
+  return {
+    name: "sync-extension-version",
+    async closeBundle() {
+      const manifestPath = resolve(rootDir, "dist/manifest.json");
+      const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+      manifest.version = packageJson.version;
+      await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    }
+  };
+}
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), syncExtensionVersion()],
   build: {
     outDir: "dist",
     emptyOutDir: true,
