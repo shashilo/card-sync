@@ -31,6 +31,7 @@ export async function lookupFreeComps(identity: CardIdentity, compLinks: CompLin
       headers: {
         accept: "text/html"
       },
+      credentials: "include",
       signal: AbortSignal.timeout(4200)
     });
 
@@ -42,11 +43,15 @@ export async function lookupFreeComps(identity: CardIdentity, compLinks: CompLin
       };
     }
 
-    const comps = parseEbaySoldComps(await response.text()).slice(0, 5);
+    const html = await response.text();
+    const comps = parseEbaySoldComps(html).slice(0, 5);
     if (!comps.length) {
+      const explicitlyEmpty = /(?:no exact matches|no results found|0 results|there are no results)/i.test(html);
       return {
-        status: "no-free-comps",
-        message: "No visible eBay sold comps were found.",
+        status: explicitlyEmpty ? "no-free-comps" : "error",
+        message: explicitlyEmpty
+          ? "eBay returned no sold listings for this search. Open the eBay link to try a broader query."
+          : "eBay returned a page CardSync could not read. Open the sold-search link to check sign-in or verify the results.",
         comps: []
       };
     }
@@ -96,13 +101,13 @@ export function valuationFromFreeComps(identity: CardIdentity, comps: SoldComp[]
 }
 
 export function parseEbaySoldComps(html: string): SoldComp[] {
-  const items = html.match(/<li\b[^>]*class="[^"]*\bs-item\b[^"]*"[\s\S]*?<\/li>/gi) ?? [];
+  const items = html.match(/<li\b[^>]*class="[^"]*\b(?:s-item|s-card)\b[^"]*"[\s\S]*?<\/li>/gi) ?? [];
   const comps: SoldComp[] = [];
 
   for (const item of items) {
-    const title = cleanHtml(firstMatch(item, /class="[^"]*\bs-item__title\b[^"]*"[^>]*>([\s\S]*?)<\/[^>]+>/i));
-    const priceText = cleanHtml(firstMatch(item, /class="[^"]*\bs-item__price\b[^"]*"[^>]*>([\s\S]*?)<\/[^>]+>/i));
-    const url = decodeHtml(firstMatch(item, /class="[^"]*\bs-item__link\b[^"]*"[^>]*href="([^"]+)"/i));
+    const title = cleanHtml(firstMatch(item, /class="[^"]*\b(?:s-item__title|s-card__title)\b[^"]*"[^>]*>([\s\S]*?)<\/[^>]+>/i));
+    const priceText = cleanHtml(firstMatch(item, /class="[^"]*\b(?:s-item__price|s-card__price)\b[^"]*"[^>]*>([\s\S]*?)<\/[^>]+>/i));
+    const url = decodeHtml(firstMatch(item, /class="[^"]*\b(?:s-item__link|s-card__link)\b[^"]*"[^>]*href="([^"]+)"/i));
     const soldDate = cleanHtml(firstMatch(item, /class="[^"]*\bPOSITIVE\b[^"]*"[^>]*>([\s\S]*?)<\/[^>]+>/i));
     const price = parsePrice(priceText);
 
