@@ -98,7 +98,9 @@ function sizeBonus(
 ): number {
   const heightShare = box.height / Math.max(1, bounds.height);
   const areaShare = (box.width * box.height) / Math.max(1, bounds.width * bounds.height);
-  return clamp(heightShare * 0.78 + areaShare * 0.55, 0, 1);
+  const heightFit = clamp(1 - Math.abs(heightShare - 0.38) / 0.5, 0, 1);
+  const areaFit = clamp(1 - Math.abs(areaShare - 0.12) / 0.2, 0, 1);
+  return heightFit * 0.65 + areaFit * 0.35;
 }
 
 function expandBox(
@@ -141,8 +143,8 @@ export function buildDetectionScanPlan(
     width: Math.max(1, right - left),
     height: Math.max(1, bottom - top)
   };
-  const minHeight = clamp(searchBounds.height * 0.3, 76, searchBounds.height);
-  const maxHeight = clamp(searchBounds.height * 0.98, minHeight, searchBounds.height);
+  const minHeight = clamp(searchBounds.height * 0.16, 48, searchBounds.height);
+  const maxHeight = clamp(searchBounds.height * 0.82, minHeight, searchBounds.height);
 
   return {
     searchBounds,
@@ -231,6 +233,7 @@ export function detectCardBoxes(
           const innerBrightness = rectSum(brightnessIntegral, innerX, innerY, innerW, innerH) / (innerW * innerH);
           const outerBrightness = rectSum(brightnessIntegral, x, y, w, h) / (w * h);
           const contrast = Math.abs(innerBrightness - outerBrightness);
+          if (h / searchBounds.height > 0.84 || w / searchBounds.width > 0.9) continue;
           const center = centerBonus({ x, y, width: w, height: h }, searchBounds);
           const size = sizeBonus({ width: w, height: h }, searchBounds);
           const score =

@@ -22,8 +22,8 @@ export function identitySearchText(identity: Partial<CardIdentity>): string {
 }
 
 export function inferIdentityFromContext(context?: PageContext): CardIdentity {
-  const source = clean(`${context?.auctionText ?? ""} ${context?.title ?? ""} ${context?.visibleText ?? ""}`);
-  const matched = DEMO_CATALOG.find((entry) => entry.keywords.every((keyword) => source.includes(clean(keyword))));
+  const identityText = clean(`${context?.auctionText ?? ""} ${context?.title ?? ""}`);
+  const matched = DEMO_CATALOG.find((entry) => entry.keywords.every((keyword) => identityText.includes(clean(keyword))));
 
   if (matched) {
     return {
@@ -42,18 +42,20 @@ export function inferIdentityFromContext(context?: PageContext): CardIdentity {
     };
   }
 
-  const year = source.match(/\b(19[5-9][0-9]|20[0-3][0-9])\b/)?.[1];
-  const grade = source.match(/\b(psa|bgs|sgc|cgc)\s*(10|9\.5|9|8\.5|8|7\.5|7)\b/i);
+  const year = identityText.match(/\b(19[5-9][0-9]|20[0-3][0-9])\b/)?.[1];
+  const grade = identityText.match(/\b(psa|bgs|sgc|cgc)\s*(10|9\.5|9|8\.5|8|7\.5|7)\b/i);
   const possiblePlayer = context?.auctionText?.split(/[|·,-]/)[0]?.replace(/\s+/g, " ").trim();
-  const hasStructuredAuctionText = Boolean(possiblePlayer && (year || grade));
+  const genericLabels = new Set(["auction", "products", "shop", "sold", "basketball cards", "live auction"]);
+  const meaningfulPlayer = possiblePlayer && !genericLabels.has(clean(possiblePlayer)) ? possiblePlayer : undefined;
+  const hasStructuredAuctionText = Boolean(meaningfulPlayer && (year || grade));
 
   return {
     year,
     gradeCompany: grade?.[1]?.toUpperCase(),
     grade: grade?.[2],
     rawText: context?.auctionText || context?.title || "Visible sports card",
-    player: possiblePlayer && possiblePlayer.length < 60 ? possiblePlayer : undefined,
-    confidence: hasStructuredAuctionText ? 0.54 : possiblePlayer ? 0.42 : 0.28,
+    player: meaningfulPlayer && meaningfulPlayer.length < 60 ? meaningfulPlayer : undefined,
+    confidence: hasStructuredAuctionText ? 0.54 : meaningfulPlayer ? 0.42 : 0.28,
     evidence: ["No AI provider configured; using visible page text only."],
     alternatives: []
   };

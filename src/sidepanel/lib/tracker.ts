@@ -76,7 +76,9 @@ export function priceLookupLabel(priceLookup: PriceLookupState): string {
   if (priceLookup.status === "no-match") return "No confident price match";
   if (priceLookup.status === "proxy-offline") return "Price proxy offline";
   if (priceLookup.status === "missing-token") return "SportsCardsPro token missing";
-  if (priceLookup.status === "error") return "SportsCardsPro error";
+  if (priceLookup.status === "error") {
+    return /eBay/i.test(priceLookup.message) ? "Free comps error" : "SportsCardsPro error";
+  }
   return "SportsCardsPro idle";
 }
 
