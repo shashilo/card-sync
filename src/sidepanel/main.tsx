@@ -401,7 +401,10 @@ function App(): JSX.Element {
       return true;
     }
 
-    if (slabLabelCrop) {
+    const pageMentionsSlab = /\b(?:psa|bgs|sgc|cgc|slab|graded)\b/i.test(
+      `${contextRef.current?.auctionText ?? ""} ${contextRef.current?.title ?? ""}`
+    );
+    if (slabLabelCrop && pageMentionsSlab) {
       identifySlabLabel(slabLabelCrop.dataUrl, contextRef.current, settingsRef.current)
         .then(({ identity, estimate }) => {
           if (!isCurrentScan(track.id, signature, requestId)) return;
@@ -435,8 +438,19 @@ function App(): JSX.Element {
     }
 
     identifyCard(crop.dataUrl, contextRef.current, settingsRef.current)
-      .then(({ identity, estimate }) => {
+      .then(({ identity, estimate, error: identificationError }) => {
         if (!isCurrentScan(track.id, signature, requestId)) return;
+        if (identificationError) {
+          markTrack(track.id, {
+            identity,
+            inFlight: false,
+            stage: "error",
+            label: identificationError,
+            priceLookup: priceLookupState("error", identificationError),
+            updatedAt: Date.now()
+          });
+          return;
+        }
         const valuation = buildValuation(
           identity,
           sessionCacheRef.current,

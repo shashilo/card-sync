@@ -5,6 +5,7 @@ import type { AiValueEstimate } from "./pricing";
 export interface AiCardResult {
   identity: CardIdentity;
   estimate?: AiValueEstimate;
+  error?: string;
 }
 
 type IdentifyMode = "card" | "slab-label";
@@ -39,13 +40,13 @@ async function identifyImage(
 
   if (provider.provider === "anthropic") {
     return identifyWithAnthropic(imageDataUrl, context, provider, fallback, mode).catch((caught) => {
-      if (isAbortError(caught)) return { identity: fallback };
+      if (isAbortError(caught)) return { identity: fallback, error: timeoutMessage(provider, mode) };
       throw caught;
     });
   }
 
   return identifyWithOpenAiCompatible(imageDataUrl, context, provider, fallback, mode).catch((caught) => {
-    if (isAbortError(caught)) return { identity: fallback };
+    if (isAbortError(caught)) return { identity: fallback, error: timeoutMessage(provider, mode) };
     throw caught;
   });
 }
@@ -190,8 +191,7 @@ function buildPrompt(mode: IdentifyMode): string {
 function contextText(context: PageContext | undefined): string {
   return [
     `Page title: ${context?.title ?? ""}`,
-    `Auction text: ${context?.auctionText ?? ""}`,
-    `Visible text excerpt: ${(context?.visibleText ?? "").slice(0, 1800)}`
+    `Auction text (weak evidence only): ${context?.auctionText ?? ""}`
   ].join("\n");
 }
 
@@ -228,7 +228,12 @@ function providerLabel(provider: ProviderSettings): string {
 }
 
 function timeoutForMode(mode: IdentifyMode): number {
-  return mode === "slab-label" ? 1800 : 3200;
+  return mode === "slab-label" ? 6000 : 12000;
+}
+
+function timeoutMessage(provider: ProviderSettings, mode: IdentifyMode): string {
+  const seconds = Math.round(timeoutForMode(mode) / 1000);
+  return `${providerLabel(provider)} card identification timed out after ${seconds} seconds. Click the card outline to retry.`;
 }
 
 function isAbortError(value: unknown): boolean {
