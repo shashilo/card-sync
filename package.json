@@ -1,10 +1,10 @@
 {
   "name": "cardsync",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "vite build",
+    "build": "node scripts/sync-extension-version.mjs && vite build",
     "smoke:extension": "node scripts/smoke-extension.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
