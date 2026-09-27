@@ -1,47 +1,26 @@
-# CardSync Sudden-Death POC
+# CardSync Whatnot pilot
 
-CardSync is a Chrome MV3 extension POC for Whatnot live singles auctions. After one user click, it captures the active Whatnot tab, tracks card-shaped regions in the livestream, outlines detected cards on the page, and shows a fast provisional value/max-bid badge while richer details live in the side panel.
+CardSync is a Chrome MV3 extension prototype for buyer-side, user-initiated scanning of a Whatnot livestream tab. It outlines card-shaped regions, asks a configured vision provider to read a crop, and offers research links. With no configured AI key, page text is only a low-confidence lead and does not trigger a priced recommendation.
 
-## Run Locally
+**This build is not validated for paid use or a two-second exact valuation claim.** The [Whatnot readiness audit](docs/WHATNOT_READINESS_AUDIT.md) records the code review, tests, blockers, and field-validation gate. The separate [Expo mobile prototype](apps/mobile/README.md) uses synthetic sample sales and does not analyze live photos.
+
+## Run the extension locally
 
 ```bash
-npm install
+npm ci
+npm run typecheck
+npm test
 npm run build
 ```
 
-Then load `dist/` as an unpacked extension in Chrome.
+Load `dist/` as an unpacked extension in Chrome. Open a Whatnot live show, click the CardSync toolbar icon to arm tab capture, and use the side panel to inspect the current candidate. If no outline appears, hold Shift and drag a rectangle around the card on the Whatnot page to force a crop; the selected card remains visible for about 12 seconds. A card moving, turning, or leaving the frame may delay or prevent a readable result. Manually verify identity and every price before bidding.
 
-## How The POC Works
+`package.json` is the version source. Every `npm run build` or `pnpm build` copies its version into `public/manifest.json` before building `dist/`. Change the package version when releasing an update, then reload the unpacked extension in `chrome://extensions`. Building does not fetch source updates; pull or apply them first.
 
-- The content script injects a transparent overlay on Whatnot pages.
-- The side panel starts `tabCapture` after the user clicks `Start scanning`.
-- Local canvas vision tracks card-shaped rectangles continuously.
-- Stable card crops are sent to the configured AI provider, not every frame.
-- Stable identities can be sent to a CardSync comp proxy for SportsCardsPro / PriceCharting price-guide values.
-- The overlay shows staged states: detecting, candidate, fast value, or price-backed.
-- The sidebar shows identity evidence, warnings, and comp-search links.
+The default vision setting is `Mock/page-text only` and the price-guide proxy URL is blank. For visual identification, set a user-owned OpenAI, OpenRouter, Anthropic, or compatible endpoint key in Settings. This prototype stores the key in `chrome.storage.local` and sends card crops to that provider. Scans and crops can also be retained locally in IndexedDB until the show's history is cleared. Do not use sensitive streams without understanding those transmissions and storage.
 
-## BYOK AI Settings
+The default pricing path searches and parses eBay sold-result HTML, which can fail or misread results. At least three matching parsed rows with a sold marker are required for a provisional range. Those rows are not a licensed or independently confirmed sales feed, and the UI deliberately does not display a suggested maximum bid.
 
-The default provider is `Mock/page-text only`, which can demonstrate tracking and seeded demo values from visible page text. For real visual identification, users bring their own key and choose one of:
+## Optional local guide proxy
 
-- OpenAI / ChatGPT API
-- OpenRouter
-- Anthropic Claude
-- Custom OpenAI-compatible endpoint
-
-API keys are stored locally in `chrome.storage.local` for this POC. CardSync does not pay for or proxy the user's model usage in this BYOK build. Custom endpoints request a narrow Chrome host permission for the configured endpoint instead of using broad default host access.
-
-## Limits
-
-This is decision support, not an appraisal tool. AI-estimated values are labeled provisional. Price-backed values require the CardSync comp proxy and a SportsCardsPro token.
-
-## SportsCardsPro Price Guide Proxy
-
-The extension defaults to `http://127.0.0.1:8787/v1/price-guide/lookup` for local POC testing. Run the proxy locally with:
-
-```bash
-npx wrangler dev worker/src/index.ts --config worker/wrangler.toml --local --port 8787
-```
-
-Set `SPORTSCARDSPRO_TOKEN` in `worker/.dev.vars` for local development or as a Cloudflare Worker secret for deployment. The extension only stores the proxy URL; the SportsCardsPro token stays server-side.
+For an authorized SportsCardsPro account, run the [Worker](worker/README.md) locally, set its token in `worker/.dev.vars`, and enter `http://127.0.0.1:8787/v1/price-guide/lookup` as the extension's proxy URL. A matched guide price is labeled as a guide reference with zero individual sold transactions. SportsCardsPro's API does not provide historic sales, and displaying its data to customers requires a separate commercial license and express written permission. The current Worker has no user authentication or centralized quota, so it must not be deployed as a public paid-service endpoint.
