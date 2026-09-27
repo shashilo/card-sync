@@ -86,10 +86,10 @@ function centerBonus(
   const boxCx = box.x + box.width / 2;
   const boxCy = box.y + box.height / 2;
   const boundsCx = bounds.x + bounds.width / 2;
-  const boundsCy = bounds.y + bounds.height / 2;
-  const nx = Math.abs(boxCx - boundsCx) / Math.max(1, bounds.width / 2);
-  const ny = Math.abs(boxCy - boundsCy) / Math.max(1, bounds.height / 2);
-  return clamp(1 - Math.hypot(nx, ny), 0, 1);
+  const targetY = bounds.y + bounds.height * 0.62;
+  const nx = (boxCx - boundsCx) / Math.max(1, bounds.width * 0.3);
+  const ny = (boxCy - targetY) / Math.max(1, bounds.height * 0.38);
+  return Math.exp(-0.5 * (nx * nx + ny * ny));
 }
 
 function sizeBonus(
@@ -237,11 +237,11 @@ export function detectCardBoxes(
           const center = centerBonus({ x, y, width: w, height: h }, searchBounds);
           const size = sizeBonus({ width: w, height: h }, searchBounds);
           const score =
-            borderDensity * 0.58 +
-            innerEdges * 0.14 +
-            contrast * 0.12 +
-            center * 0.14 +
-            size * 0.22;
+            borderDensity * 0.48 +
+            innerEdges * 0.1 +
+            contrast * 0.08 +
+            center * 0.28 +
+            size * 0.06;
 
           if (score < 0.22) continue;
 
