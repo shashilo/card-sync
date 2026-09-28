@@ -15,7 +15,8 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   scanCadenceMs: 250,
   identifyStableAfterMs: 150,
   maxTrackedCards: 1,
-  allowAiEstimatedValues: true
+  allowAiEstimatedValues: true,
+  maxBidPercent: 80
 };
 
 export async function loadSettings(): Promise<ExtensionSettings> {
@@ -26,8 +27,14 @@ export async function loadSettings(): Promise<ExtensionSettings> {
     ...saved,
     provider: normalizeProviderSettings(saved?.provider),
     priceGuideProxyUrl: normalizePriceGuideProxyUrl(saved?.priceGuideProxyUrl),
+    maxBidPercent: normalizeMaxBidPercent(saved?.maxBidPercent),
     maxTrackedCards: DEFAULT_SETTINGS.maxTrackedCards
   };
+}
+
+export function normalizeMaxBidPercent(value: number | undefined): number {
+  if (!Number.isFinite(value)) return DEFAULT_SETTINGS.maxBidPercent;
+  return Math.max(10, Math.min(100, Math.round(value as number)));
 }
 
 export async function saveSettings(settings: ExtensionSettings): Promise<void> {

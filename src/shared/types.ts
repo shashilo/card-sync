@@ -182,4 +182,5 @@ export interface ExtensionSettings {
   identifyStableAfterMs: number;
   maxTrackedCards: number;
   allowAiEstimatedValues: boolean;
+  maxBidPercent: number;
 }

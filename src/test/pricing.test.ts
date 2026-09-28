@@ -27,6 +27,7 @@ const jordan: CardIdentity = {
 describe("pricing pipeline", () => {
   it("defaults to free manual comp mode", () => {
     expect(DEFAULT_SETTINGS.priceGuideProxyUrl).toBe("");
+    expect(DEFAULT_SETTINGS.maxBidPercent).toBe(80);
   });
 
   it("migrates the old localhost proxy default to free manual mode", () => {
@@ -72,7 +73,7 @@ describe("pricing pipeline", () => {
 
     const valuation = buildValuation(jordan, cache, { low: 1, high: 2 }, true);
     expect(valuation.source).toBe("session-cache");
-    expect(valuation.maxBid).toBe(115);
+    expect(valuation.maxBid).toBe(96);
   });
 
   it("falls back to page text when no AI provider is configured", () => {
@@ -180,7 +181,7 @@ describe("pricing pipeline", () => {
     const valuation = buildValuation(jordan, new Map(), undefined, true, quote);
     expect(valuation.source).toBe("price-guide");
     expect(valuation.low).toBe(1917);
-    expect(valuation.maxBid).toBe(1917);
+    expect(valuation.maxBid).toBe(1804);
     expect(valuation.high).toBe(2593);
   });
 

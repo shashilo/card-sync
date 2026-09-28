@@ -16,7 +16,7 @@ import { lookupPriceGuide, type PriceGuideLookupResult } from "./lib/price-guide
 import { lookupFreeComps, valuationFromFreeComps } from "./lib/free-comps";
 import type { FreeCompLookupResult } from "./lib/free-comps";
 import { lookupCardLadderComps } from "./lib/card-ladder";
-import { generateCompLinks, buildValuation, rememberValuation, stageFor } from "./lib/pricing";
+import { withMaxBidPercent, generateCompLinks, buildValuation, rememberValuation, stageFor } from "./lib/pricing";
 import { rememberCardFingerprint, shouldPersistScanHistory, shouldStartScanForFingerprint, type ActiveScanFingerprint } from "./lib/scan-gate";
 import { formatPrice, labelForTrack, priceLookupLabel, updateTrackedCards, type TrackedCard } from "./lib/tracker";
 import "./styles.css";
@@ -178,6 +178,13 @@ function App(): JSX.Element {
     }
     setSettings(next);
     settingsRef.current = next;
+    const updatedTracks = tracksRef.current.map((track) => {
+      if (!track.valuation) return track;
+      const valuation = withMaxBidPercent(track.valuation, next.maxBidPercent, track.freeComps?.[0]?.price);
+      return { ...track, valuation };
+    });
+    tracksRef.current = updatedTracks;
+    setTracks(updatedTracks);
     await saveSettings(next);
     logDiagnostic("Settings saved", {
       provider: next.provider.provider,
@@ -568,7 +575,9 @@ function App(): JSX.Element {
           identity,
           sessionCacheRef.current,
           estimate,
-          settingsRef.current.allowAiEstimatedValues
+          settingsRef.current.allowAiEstimatedValues,
+          undefined,
+          settingsRef.current.maxBidPercent
         );
         logDiagnostic("Valuation decision", {
           trackId: track.id,
@@ -685,7 +694,7 @@ function App(): JSX.Element {
       return;
     }
 
-    const valuation = buildValuation(identity, sessionCacheRef.current, undefined, settingsRef.current.allowAiEstimatedValues, result.quote);
+    const valuation = buildValuation(identity, sessionCacheRef.current, undefined, settingsRef.current.allowAiEstimatedValues, result.quote, settingsRef.current.maxBidPercent);
     logDiagnostic("SportsCardsPro valuation decision", {
       trackId,
       source: valuation.source,
@@ -748,7 +757,7 @@ function App(): JSX.Element {
     logDiagnostic("Free comps lookup completed", { provider: result.comps[0]?.source ?? "none", status: result.status, count: result.comps.length, identityConfidence: Math.round(identity.confidence * 100), message: resultMessage });
     if (signature && !isCurrentScan(trackId, signature, requestId)) return;
 
-    const valuation = result.comps.length ? valuationFromFreeComps(identity, result.comps) : tracksRef.current.find((candidate) => candidate.id === trackId)?.valuation;
+    const valuation = result.comps.length ? valuationFromFreeComps(identity, result.comps, settingsRef.current.maxBidPercent) : tracksRef.current.find((candidate) => candidate.id === trackId)?.valuation;
     if (result.comps.length && valuation) {
       const sortedPrices = result.comps.map((comp) => comp.price).filter((price) => price > 0).sort((a, b) => a - b);
       const medianPrice = sortedPrices[Math.floor(sortedPrices.length / 2)];
@@ -758,7 +767,9 @@ function App(): JSX.Element {
         includedPrices: JSON.stringify(sortedPrices),
         count: sortedPrices.length,
         medianPrice,
-        maxBidRule: "85% of median sold price",
+        maxBidRule: `${settingsRef.current.maxBidPercent}% of latest sold price`,
+        maxBidReferencePrice: result.comps[0]?.price ?? null,
+        maxBidReferenceDate: result.comps[0]?.soldDate ?? null,
         low: valuation.low,
         high: valuation.high,
         maxBid: valuation.maxBid,
@@ -810,7 +821,7 @@ function App(): JSX.Element {
     const result = await lookupPriceGuide(identity, settingsRef.current.priceGuideProxyUrl);
     if (result.status !== "ready" || !result.quote) return;
 
-    const valuation = buildValuation(identity, sessionCacheRef.current, undefined, settingsRef.current.allowAiEstimatedValues, result.quote);
+    const valuation = buildValuation(identity, sessionCacheRef.current, undefined, settingsRef.current.allowAiEstimatedValues, result.quote, settingsRef.current.maxBidPercent);
     rememberValuation(identity, valuation, sessionCacheRef.current);
     applyPrewarmedValuationToCurrentTracks(identity, valuation, result);
   }
@@ -1455,6 +1466,18 @@ function SettingsPanel({
           value={draft.provider.model}
           onChange={(event) => setDraft({ ...draft, provider: { ...draft.provider, model: event.target.value } })}
         />
+      </label>
+      <label>
+        Suggested max bid: {draft.maxBidPercent}% of the reference price
+        <input
+          type="range"
+          min={10}
+          max={100}
+          step={1}
+          value={draft.maxBidPercent}
+          onChange={(event) => setDraft({ ...draft, maxBidPercent: Number(event.target.value) })}
+        />
+        <span className="helper">Uses the latest sold comp when available, otherwise the configured price guide or provisional estimate.</span>
       </label>
       <label className="checkRow">
         <input

@@ -109,7 +109,7 @@ function freeCompSearchQueries(identity: CardIdentity): string[] {
   return [...new Set(queries.map((value) => value.replace(/\s+/g, " ").trim()).filter(Boolean))];
 }
 
-export function valuationFromFreeComps(identity: CardIdentity, comps: SoldComp[]): Valuation {
+export function valuationFromFreeComps(identity: CardIdentity, comps: SoldComp[], maxBidPercent = 80): Valuation {
   const prices = comps.map((comp) => comp.price).filter((price) => Number.isFinite(price) && price > 0).sort((a, b) => a - b);
   if (!prices.length) {
     return {
@@ -130,7 +130,7 @@ export function valuationFromFreeComps(identity: CardIdentity, comps: SoldComp[]
   return {
     low: Math.round(median * 0.85),
     high: Math.round(median * 1.15),
-    maxBid: Math.round(median * 0.85),
+    maxBid: Math.round((comps[0]?.price ?? median) * Math.max(0, Math.min(100, maxBidPercent)) / 100),
     currency: "USD",
     confidence: Math.min(0.68, Math.max(0.5, identity.confidence)),
     source: "free-comps",

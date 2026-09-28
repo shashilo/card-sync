@@ -66,6 +66,7 @@ describe("free comp extraction", () => {
     expect(valuation.source).toBe("free-comps");
     expect(valuation.compCount).toBe(2);
     expect(valuation.maxBid).toBeGreaterThan(0);
+    expect(valuation.maxBid).toBe(1680);
     vi.unstubAllGlobals();
   });
 });

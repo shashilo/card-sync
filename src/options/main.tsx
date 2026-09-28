@@ -116,6 +116,19 @@ function OptionsApp(): JSX.Element {
           </label>
         </div>
 
+        <label>
+          Suggested max bid: {settings.maxBidPercent}% of the reference price
+          <input
+            type="range"
+            min={10}
+            max={100}
+            step={1}
+            value={settings.maxBidPercent}
+            onChange={(event) => setSettings({ ...settings, maxBidPercent: Number(event.target.value) })}
+          />
+          <span>Uses the latest sold comp when available, otherwise the configured price guide or provisional estimate.</span>
+        </label>
+
         <label className="checkRow">
           <input
             type="checkbox"

@@ -44,15 +44,16 @@ export function buildValuation(
   sessionCache: Map<string, Valuation>,
   aiEstimate: AiValueEstimate | undefined,
   allowAiEstimate: boolean,
-  priceGuideQuote?: PriceGuideQuote
+  priceGuideQuote?: PriceGuideQuote,
+  maxBidPercent = 80
 ): Valuation {
-  if (priceGuideQuote) return valuationFromPriceGuide(identity, priceGuideQuote);
+  if (priceGuideQuote) return valuationFromPriceGuide(identity, priceGuideQuote, maxBidPercent);
 
   const key = identityKey(identity);
   const cached = key ? sessionCache.get(key) : undefined;
   if (cached) {
     return {
-      ...cached,
+      ...withMaxBidPercent(cached, maxBidPercent),
       source: "session-cache",
       reasons: ["Reused value from this live-show session.", ...cached.reasons]
     };
@@ -60,16 +61,15 @@ export function buildValuation(
 
   const searchable = `${identitySearchText(identity)} ${identity.rawText}`.toLowerCase();
   const seeded = DEMO_CATALOG.find((entry) => entry.keywords.every((keyword) => searchable.includes(keyword.toLowerCase())));
-  if (allowAiEstimate && seeded) return seeded.valuation;
+  if (allowAiEstimate && seeded) return withMaxBidPercent(seeded.valuation, maxBidPercent);
 
   if (allowAiEstimate && aiEstimate?.low && aiEstimate?.high) {
     const low = Math.max(1, Math.min(aiEstimate.low, aiEstimate.high));
     const high = Math.max(low, aiEstimate.high);
-    const maxBid = aiEstimate.maxBid && aiEstimate.maxBid > 0 ? aiEstimate.maxBid : Math.round(low + (high - low) * 0.38);
-    return {
+    return withMaxBidPercent({
       low,
       high,
-      maxBid,
+      maxBid: 0,
       currency: "USD",
       confidence: Math.min(identity.confidence, aiEstimate.confidence ?? 0.48),
       source: "ai-estimate",
@@ -79,7 +79,7 @@ export function buildValuation(
         ...(aiEstimate.warnings ?? []),
         "AI estimate only; use as a fast risk signal, not a completed comp."
       ]
-    };
+    }, maxBidPercent);
   }
 
   return {
@@ -108,7 +108,13 @@ export function rememberValuation(identity: CardIdentity, valuation: Valuation, 
   cache.set(key, valuation);
 }
 
-function valuationFromPriceGuide(identity: CardIdentity, quote: PriceGuideQuote): Valuation {
+export function withMaxBidPercent(valuation: Valuation, maxBidPercent = 80, referencePriceOverride?: number): Valuation {
+  const referencePrice = referencePriceOverride ?? valuation.priceGuideQuote?.selectedPrice ?? (valuation.low + valuation.high) / 2;
+  const percentage = Math.max(0, Math.min(100, maxBidPercent)) / 100;
+  return { ...valuation, maxBid: valuation.source === "none" ? 0 : Math.round(referencePrice * percentage) };
+}
+
+function valuationFromPriceGuide(identity: CardIdentity, quote: PriceGuideQuote, maxBidPercent: number): Valuation {
   const warnings = [
     ...quote.warnings,
     ...missingIdentityWarnings(identity),
@@ -132,10 +138,10 @@ function valuationFromPriceGuide(identity: CardIdentity, quote: PriceGuideQuote)
   const fairValue = quote.selectedPrice;
   const confidence = Math.min(0.96, Math.max(identity.confidence, quote.confidence * 0.86 + identity.confidence * 0.14));
 
-  return {
+  return withMaxBidPercent({
     low: Math.round(fairValue * 0.85),
     high: Math.round(fairValue * 1.15),
-    maxBid: Math.round(fairValue * 0.85),
+    maxBid: 0,
     currency: "USD",
     confidence,
     source: "price-guide",
@@ -146,7 +152,7 @@ function valuationFromPriceGuide(identity: CardIdentity, quote: PriceGuideQuote)
     ],
     warnings,
     priceGuideQuote: quote
-  };
+  }, maxBidPercent);
 }
 
 function missingIdentityWarnings(identity: CardIdentity): string[] {
