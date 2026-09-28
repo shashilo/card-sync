@@ -1038,9 +1038,9 @@ function App(): JSX.Element {
         )}
       </section>
 
-      <HistoryPanel items={historyItems} onClear={clearCurrentShowHistory} />
-
       {activeTrack ? <DetailPanel track={activeTrack} /> : null}
+
+      <HistoryPanel items={historyItems} onClear={clearCurrentShowHistory} />
     </main>
   );
 }
