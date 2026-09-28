@@ -257,12 +257,13 @@ function renderTracks(tracks: TrackSummary[]): void {
   if (state.disabled) return;
   const target = ensureOverlay();
   if (!target) return;
+  const videoRect = getLargestVideoRect();
   target.querySelectorAll(".frame").forEach((node) => node.remove());
   target.querySelectorAll(".status").forEach((node) => node.remove());
   latestTracks = tracks;
 
   for (const track of tracks) {
-    const box = track.box;
+    const box = track.badgeTone === "red" && videoRect ? videoRect : track.box;
 
     const frame = document.createElement("div");
     frame.className = `frame ${track.badgeTone}`;
