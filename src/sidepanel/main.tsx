@@ -14,6 +14,7 @@ import { clearShowHistory, listShowHistory, showKeyFromUrl, upsertScanHistoryIte
 import { identityKey, inferIdentityFromContext } from "./lib/identity";
 import { lookupPriceGuide, type PriceGuideLookupResult } from "./lib/price-guide";
 import { lookupFreeComps, valuationFromFreeComps } from "./lib/free-comps";
+import type { FreeCompLookupResult } from "./lib/free-comps";
 import { lookupCardLadderComps } from "./lib/card-ladder";
 import { generateCompLinks, buildValuation, rememberValuation, stageFor } from "./lib/pricing";
 import { rememberCardFingerprint, shouldPersistScanHistory, shouldStartScanForFingerprint, type ActiveScanFingerprint } from "./lib/scan-gate";
@@ -472,9 +473,7 @@ function App(): JSX.Element {
     rememberScanSignature(recentScanSignaturesRef.current, signature, now);
     rememberCardFingerprint(recentCardFingerprintsRef.current, crop.fingerprint, now);
     activeScansRef.current.set(track.id, { signature, fingerprint: crop.fingerprint, requestId });
-    const pendingPriceLookup = settingsRef.current.priceGuideProxyUrl.trim()
-      ? priceLookupState("pending", "Checking SportsCardsPro.")
-      : priceLookupState("free-comps-pending", "Fetching Card Ladder sales comps.");
+    const pendingPriceLookup = priceLookupState("free-comps-pending", "Searching Card Ladder sales.");
     markTrack(track.id, { inFlight: true, identifyRequestedAt: now, stage: "candidate", priceLookup: pendingPriceLookup });
     logDiagnostic("Card crop ready", {
       trackId: track.id,
@@ -632,8 +631,9 @@ function App(): JSX.Element {
   }
 
   async function applyPriceGuide(trackId: string, track: TrackedCard, crop: string, identity: CardIdentity, signature?: string, requestId?: string): Promise<void> {
-    if (!settingsRef.current.priceGuideProxyUrl.trim()) {
-      await applyFreeComps(trackId, track, crop, identity, signature, requestId);
+    const ladderResult = await lookupCardLadderComps(identity);
+    if (ladderResult.comps.length || !settingsRef.current.priceGuideProxyUrl.trim()) {
+      await applyFreeComps(trackId, track, crop, identity, signature, requestId, ladderResult);
       return;
     }
 
@@ -689,12 +689,12 @@ function App(): JSX.Element {
     }, signature);
   }
 
-  async function applyFreeComps(trackId: string, track: TrackedCard, crop: string, identity: CardIdentity, signature?: string, requestId?: string): Promise<void> {
+  async function applyFreeComps(trackId: string, track: TrackedCard, crop: string, identity: CardIdentity, signature?: string, requestId?: string, initialLadderResult?: FreeCompLookupResult): Promise<void> {
     const compLinks = generateCompLinks(identity);
     markTrack(trackId, {
       priceLookup: priceLookupState("free-comps-pending", "Fetching Card Ladder sales comps.")
     });
-    const ladderResult = await lookupCardLadderComps(identity);
+    const ladderResult = initialLadderResult ?? await lookupCardLadderComps(identity);
     const result = ladderResult.comps.length ? ladderResult : await lookupFreeComps(identity, compLinks);
     const resultMessage = ladderResult.comps.length
       ? ladderResult.message
