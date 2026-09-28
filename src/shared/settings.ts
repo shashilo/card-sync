@@ -15,7 +15,6 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   scanCadenceMs: 250,
   identifyStableAfterMs: 150,
   maxTrackedCards: 1,
-  allowAiEstimatedValues: true,
   maxBidPercent: 80,
   autoScan: true
 };

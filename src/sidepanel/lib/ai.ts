@@ -1,16 +1,13 @@
 import type { CardIdentity, ExtensionSettings, PageContext, ProviderSettings } from "../../shared/types";
 import { coerceIdentity, inferIdentityFromContext } from "./identity";
-import type { AiValueEstimate } from "./pricing";
 
 export interface AiCardResult {
   identity: CardIdentity;
-  estimate?: AiValueEstimate;
   error?: string;
 }
 
 type IdentifyMode = "card" | "slab-label";
-// Leave enough room for the structured identity and estimate without truncating JSON.
-const IDENTIFICATION_MAX_TOKENS = 768;
+const IDENTIFICATION_MAX_TOKENS = 640;
 
 export async function identifyCard(
   imageDataUrl: string,
@@ -187,13 +184,10 @@ function buildPrompt(mode: IdentifyMode): string {
     "Return strict JSON only.",
     ...slabInstructions,
     "If year, set, player, grade, card number, or parallel is uncertain, leave it blank or lower confidence.",
-    "You may include a broad provisional USD estimate only when useful for a 15-30 second buyer risk signal.",
-    "Do not pretend the estimate is a sold comp.",
     "",
     "JSON shape:",
     "{",
     '  "identity": { "sport": "", "player": "", "brand": "", "product": "", "cardType": "", "rookie": null, "year": "", "set": "", "cardNumber": "", "insert": "", "parallel": "", "variation": "", "gradeCompany": "", "grade": "", "serialNumber": "", "numbered": null, "autograph": null, "autographType": "", "relic": null, "relicType": "", "rawText": "", "confidence": 0.0, "evidence": [], "alternatives": [] },',
-    '  "estimate": { "low": 0, "high": 0, "maxBid": 0, "confidence": 0.0, "reasons": [], "warnings": [] }',
     "}"
   ].join("\n");
   return prompt;
@@ -213,7 +207,6 @@ function parseProviderJson(text: string | undefined, fallback: CardIdentity): Ai
   const parsed = JSON.parse(stripJsonFence(text)) as Record<string, unknown>;
   return {
     identity: coerceIdentity(parsed.identity ?? parsed, fallback),
-    estimate: coerceEstimate(parsed.estimate)
   };
 }
 
@@ -272,32 +265,4 @@ function timeoutMessage(provider: ProviderSettings, mode: IdentifyMode): string 
 
 function isAbortError(value: unknown): boolean {
   return value instanceof DOMException && (value.name === "TimeoutError" || value.name === "AbortError");
-}
-
-function coerceEstimate(value: unknown): AiValueEstimate | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const raw = value as Record<string, unknown>;
-  return {
-    low: asPositiveNumber(raw.low),
-    high: asPositiveNumber(raw.high),
-    maxBid: asPositiveNumber(raw.maxBid) ?? asPositiveNumber(raw.max_bid),
-    confidence: asConfidence(raw.confidence),
-    reasons: asStringArray(raw.reasons),
-    warnings: asStringArray(raw.warnings)
-  };
-}
-
-function asPositiveNumber(value: unknown): number | undefined {
-  const numeric = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(numeric) && numeric > 0 ? numeric : undefined;
-}
-
-function asConfidence(value: unknown): number | undefined {
-  const numeric = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(numeric) ? Math.max(0, Math.min(1, numeric)) : undefined;
-}
-
-function asStringArray(value: unknown): string[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0).slice(0, 5);
 }

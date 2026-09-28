@@ -190,7 +190,6 @@ export interface ExtensionSettings {
   scanCadenceMs: number;
   identifyStableAfterMs: number;
   maxTrackedCards: number;
-  allowAiEstimatedValues: boolean;
   maxBidPercent: number;
   autoScan: boolean;
 }

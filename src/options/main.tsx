@@ -126,16 +126,7 @@ function OptionsApp(): JSX.Element {
             value={settings.maxBidPercent}
             onChange={(event) => setSettings({ ...settings, maxBidPercent: Number(event.target.value) })}
           />
-          <span>Uses the latest sold comp when available, otherwise the configured price guide or provisional estimate.</span>
-        </label>
-
-        <label className="checkRow">
-          <input
-            type="checkbox"
-            checked={settings.allowAiEstimatedValues}
-            onChange={(event) => setSettings({ ...settings, allowAiEstimatedValues: event.target.checked })}
-          />
-          Allow clearly labeled AI provisional values before comp-backed data arrives
+          <span>Uses the latest sold comp or configured price guide. No AI-generated prices are shown.</span>
         </label>
 
         <label className="checkRow">

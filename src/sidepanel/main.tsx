@@ -593,7 +593,7 @@ function App(): JSX.Element {
     aiIdentificationInFlightRef.current = true;
     nextAiIdentificationAtRef.current = Date.now() + 8_000;
     identifyCard(crop.dataUrl, contextRef.current, settingsRef.current)
-      .then(({ identity: detectedIdentity, estimate, error: identificationError }) => {
+      .then(({ identity: detectedIdentity, error: identificationError }) => {
         const manualOverride = manualIdentityOverridesRef.current.get(track.id);
         const identity = manualOverride && sameCardFingerprint(manualOverride.fingerprint, crop.fingerprint)
           ? { ...detectedIdentity, ...manualOverride.fields, evidence: [...new Set([...detectedIdentity.evidence, "Applied the user's saved numbered/autograph override."])].slice(-6) }
@@ -611,17 +611,7 @@ function App(): JSX.Element {
           hasPlayer: Boolean(identity.player),
           hasYear: Boolean(identity.year),
           hasSet: Boolean(identity.set),
-          hasEstimate: Boolean(estimate),
           error: identificationError ?? ""
-        });
-        logDiagnostic("AI value estimate received", {
-          trackId: track.id,
-          low: estimate?.low ?? null,
-          high: estimate?.high ?? null,
-          maxBid: estimate?.maxBid ?? null,
-          confidence: estimate?.confidence ?? null,
-          reasons: JSON.stringify(estimate?.reasons ?? []),
-          warnings: JSON.stringify(estimate?.warnings ?? [])
         });
         if (!isCurrentScan(track.id, signature, requestId)) return;
         if (identificationError) {
@@ -638,17 +628,15 @@ function App(): JSX.Element {
         const valuation = buildValuation(
           identity,
           sessionCacheRef.current,
-          estimate,
-          settingsRef.current.allowAiEstimatedValues,
+          undefined,
+          false,
           undefined,
           settingsRef.current.maxBidPercent
         );
         logDiagnostic("Valuation decision", {
           trackId: track.id,
           source: valuation.source,
-          allowAiEstimate: settingsRef.current.allowAiEstimatedValues,
           identityConfidence: Math.round(identity.confidence * 100),
-          estimateConfidence: estimate?.confidence ?? null,
           low: valuation.low,
           high: valuation.high,
           maxBid: valuation.maxBid,
@@ -758,7 +746,7 @@ function App(): JSX.Element {
       return;
     }
 
-    const valuation = buildValuation(identity, sessionCacheRef.current, undefined, settingsRef.current.allowAiEstimatedValues, result.quote, settingsRef.current.maxBidPercent);
+    const valuation = buildValuation(identity, sessionCacheRef.current, undefined, false, result.quote, settingsRef.current.maxBidPercent);
     logDiagnostic("SportsCardsPro valuation decision", {
       trackId,
       source: valuation.source,
@@ -834,7 +822,7 @@ function App(): JSX.Element {
           source: "none" as const,
           compCount: 0,
           reasons: ["No sold price was extracted from Card Ladder, 130 Point, or eBay."],
-          warnings: ["The provisional AI estimate was suppressed because the sold-comp lookup completed without a usable source price."]
+          warnings: ["No price is shown because the sold-comp lookup completed without a usable source price."]
         };
     if (!result.comps.length) {
       logDiagnostic("No sourced price found", {
@@ -910,7 +898,7 @@ function App(): JSX.Element {
     const result = await lookupPriceGuide(identity, settingsRef.current.priceGuideProxyUrl);
     if (result.status !== "ready" || !result.quote) return;
 
-    const valuation = buildValuation(identity, sessionCacheRef.current, undefined, settingsRef.current.allowAiEstimatedValues, result.quote, settingsRef.current.maxBidPercent);
+    const valuation = buildValuation(identity, sessionCacheRef.current, undefined, false, result.quote, settingsRef.current.maxBidPercent);
     rememberValuation(identity, valuation, sessionCacheRef.current);
     applyPrewarmedValuationToCurrentTracks(identity, valuation, result);
   }
@@ -1268,7 +1256,7 @@ function DetailPanel({ track, onIdentityOverride }: {
         </div>
       </div>
 
-      {track.valuation?.source && track.valuation.source !== "none" ? (
+      {isRealValuation(track.valuation) ? (
         <div className="valueBox">
           {track.freeComps?.[0] ? (
             <>
@@ -1284,7 +1272,7 @@ function DetailPanel({ track, onIdentityOverride }: {
             </>
           ) : (
             <>
-              <span>{track.valuation.source === "ai-estimate" ? "Provisional estimate" : valuationTitle(track.valuation)}</span>
+              <span>{valuationTitle(track.valuation)}</span>
               <strong>{formatPrice((track.valuation.low + track.valuation.high) / 2)}</strong>
             </>
           )}
@@ -1303,7 +1291,7 @@ function DetailPanel({ track, onIdentityOverride }: {
       )}
 
       {track.identity ? <IdentityFacts identity={track.identity} onOverride={(fields) => onIdentityOverride(track.id, fields)} /> : null}
-      {track.valuation ? <ValuationNotes valuation={track.valuation} /> : null}
+      {track.valuation && track.valuation.source !== "ai-estimate" && track.valuation.source !== "seeded-demo" ? <ValuationNotes valuation={track.valuation} /> : null}
       {track.freeComps?.length ? <FreeCompsPanel comps={track.freeComps} /> : null}
 
       {track.compLinks.length ? (
@@ -1324,10 +1312,13 @@ function DetailPanel({ track, onIdentityOverride }: {
 function valuationTitle(valuation: Valuation): string {
   if (valuation.source === "price-guide" || valuation.priceGuideQuote) return "Price-backed Fast Value";
   if (valuation.source === "free-comps") return "Best-effort Free Comps";
-  if (valuation.source === "ai-estimate") return "Provisional Fast Value";
   if (valuation.source === "seeded-demo") return "Demo Fast Value";
   if (valuation.source === "session-cache") return "Cached Fast Value";
   return "Fast Value";
+}
+
+function isRealValuation(valuation?: Valuation): valuation is Valuation {
+  return Boolean(valuation && ["session-cache", "price-guide", "free-comps"].includes(valuation.source));
 }
 
 function HistoryPanel({ items, onClear }: { items: ScanHistoryItem[]; onClear: () => Promise<void> }): JSX.Element {
@@ -1374,16 +1365,16 @@ function HistoryPanel({ items, onClear }: { items: ScanHistoryItem[]; onClear: (
 function HistoryPriceSummary({ item }: { item: ScanHistoryItem }): JSX.Element {
   const latestSale = item.freeComps?.[0];
   const guide = item.valuation?.priceGuideQuote;
-  const estimate = item.valuation && item.valuation.source !== "none" ? (item.valuation.low + item.valuation.high) / 2 : undefined;
-  const referencePrice = latestSale?.price ?? guide?.selectedPrice ?? estimate;
-  const referenceLabel = latestSale ? `Last sold · ${latestSale.source}` : guide ? "Price guide" : estimate ? "Provisional estimate" : "No price found";
+  const cachedSourcedPrice = item.valuation?.source === "session-cache" ? (item.valuation.low + item.valuation.high) / 2 : undefined;
+  const referencePrice = latestSale?.price ?? guide?.selectedPrice ?? cachedSourcedPrice;
+  const referenceLabel = latestSale ? `Last sold · ${latestSale.source}` : guide ? "Price guide" : cachedSourcedPrice ? "Previously sourced price" : "No price found";
 
   return (
     <div className="historyPrice">
       <span>{referenceLabel}</span>
       <strong>{referencePrice ? formatPrice(referencePrice) : "—"}</strong>
       {latestSale?.soldDate ? <small>{latestSale.soldDate}</small> : null}
-      {item.valuation && item.valuation.source !== "none" ? (
+      {isRealValuation(item.valuation) ? (
         <small>
           Suggested max bid: {formatPrice(item.valuation.maxBid)}
           {item.maxBidPercent !== undefined ? ` (${item.maxBidPercent}%)` : ""}
@@ -1394,10 +1385,11 @@ function HistoryPriceSummary({ item }: { item: ScanHistoryItem }): JSX.Element {
 }
 
 function HistoryDecisionDetails({ item }: { item: ScanHistoryItem }): JSX.Element {
-  const valuation = item.valuation;
+  const valuation = item.valuation?.source === "ai-estimate" || item.valuation?.source === "seeded-demo" ? undefined : item.valuation;
   const latestSale = item.freeComps?.[0];
   const guide = valuation?.priceGuideQuote;
-  const referencePrice = latestSale?.price ?? guide?.selectedPrice ?? (valuation && valuation.source !== "none" ? (valuation.low + valuation.high) / 2 : undefined);
+  const cachedSourcedPrice = valuation?.source === "session-cache" ? (valuation.low + valuation.high) / 2 : undefined;
+  const referencePrice = latestSale?.price ?? guide?.selectedPrice ?? cachedSourcedPrice;
   const referenceSource = latestSale?.source ?? (guide ? `${guide.provider} · ${guide.selectedCondition}` : valuation?.source ?? "No priced source");
   const hasDetails = Boolean(item.freeComps?.length || item.compSearchAttempts?.length || valuation || item.identity?.evidence?.length);
 
@@ -1409,7 +1401,7 @@ function HistoryDecisionDetails({ item }: { item: ScanHistoryItem }): JSX.Elemen
           <section>
             <strong>Decision</strong>
             {referencePrice !== undefined ? <p>Reference: {formatPrice(referencePrice)} from {referenceSource}{latestSale?.soldDate ? ` (${latestSale.soldDate})` : ""}.</p> : <p>No usable price source was found.</p>}
-            {valuation && valuation.source !== "none" ? (
+            {isRealValuation(valuation) ? (
               <p>
                 {item.maxBidPercent !== undefined && referencePrice !== undefined
                   ? `${formatPrice(referencePrice)} × ${item.maxBidPercent}% = ${formatPrice(valuation.maxBid)} suggested max bid.`
@@ -1696,19 +1688,11 @@ function SettingsPanel({
           value={draft.maxBidPercent}
           onChange={(event) => setDraft({ ...draft, maxBidPercent: Number(event.target.value) })}
         />
-        <span className="helper">Uses the latest sold comp when available, otherwise the configured price guide or provisional estimate.</span>
+        <span className="helper">Uses the latest sold comp or configured price guide. No AI-generated prices are shown.</span>
       </label>
       <label className="checkRow">
         <input type="checkbox" checked={draft.autoScan} onChange={(event) => setDraft({ ...draft, autoScan: event.target.checked })} />
         Auto scan cards and request AI identification
-      </label>
-      <label className="checkRow">
-        <input
-          type="checkbox"
-          checked={draft.allowAiEstimatedValues}
-          onChange={(event) => setDraft({ ...draft, allowAiEstimatedValues: event.target.checked })}
-        />
-        Allow clearly labeled AI provisional values
       </label>
       <button className="secondaryButton" type="button" onClick={() => onChange(draft)}>
         Save settings

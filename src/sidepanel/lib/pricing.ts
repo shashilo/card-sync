@@ -1,4 +1,3 @@
-import { DEMO_CATALOG } from "../../shared/demo-catalog";
 import { PRICE_GUIDE_MIN_CONFIDENCE } from "../../shared/price-guide";
 import type { CardIdentity, CompLink, PriceGuideQuote, Valuation } from "../../shared/types";
 import { identityKey, identitySearchText } from "./identity";
@@ -42,8 +41,8 @@ export function generateCompLinks(identity: CardIdentity): CompLink[] {
 export function buildValuation(
   identity: CardIdentity,
   sessionCache: Map<string, Valuation>,
-  aiEstimate: AiValueEstimate | undefined,
-  allowAiEstimate: boolean,
+  _aiEstimate: AiValueEstimate | undefined,
+  _allowAiEstimate: boolean,
   priceGuideQuote?: PriceGuideQuote,
   maxBidPercent = 80
 ): Valuation {
@@ -59,29 +58,6 @@ export function buildValuation(
     };
   }
 
-  const searchable = `${identitySearchText(identity)} ${identity.rawText}`.toLowerCase();
-  const seeded = DEMO_CATALOG.find((entry) => entry.keywords.every((keyword) => searchable.includes(keyword.toLowerCase())));
-  if (allowAiEstimate && seeded) return withMaxBidPercent(seeded.valuation, maxBidPercent);
-
-  if (allowAiEstimate && aiEstimate?.low && aiEstimate?.high) {
-    const low = Math.max(1, Math.min(aiEstimate.low, aiEstimate.high));
-    const high = Math.max(low, aiEstimate.high);
-    return withMaxBidPercent({
-      low,
-      high,
-      maxBid: 0,
-      currency: "USD",
-      confidence: Math.min(identity.confidence, aiEstimate.confidence ?? 0.48),
-      source: "ai-estimate",
-      compCount: 0,
-      reasons: aiEstimate.reasons?.length ? aiEstimate.reasons : ["AI produced a broad provisional value before comp-backed data was available."],
-      warnings: [
-        ...(aiEstimate.warnings ?? []),
-        "AI estimate only; use as a fast risk signal, not a completed comp."
-      ]
-    }, maxBidPercent);
-  }
-
   return {
     low: 0,
     high: 0,
@@ -90,21 +66,20 @@ export function buildValuation(
     confidence: identity.confidence,
     source: "none",
     compCount: 0,
-    reasons: ["Comp searches are ready, but no fast valuation is available yet."],
-    warnings: ["Open the comp links before bidding if the auction clock allows."]
+    reasons: ["No sold comp or configured price-guide value is available."],
+    warnings: ["No price is shown until a real source returns a value. Open the comp links or retry the lookup."]
   };
 }
 
 export function stageFor(identity: CardIdentity, valuation: Valuation): "candidate" | "fast-value" | "comp-backed" | "no-bid" {
   if (identity.confidence < 0.5) return "no-bid";
   if (valuation.source === "none") return "candidate";
-  if (valuation.source === "ai-estimate") return "fast-value";
   return valuation.confidence >= 0.72 ? "comp-backed" : "fast-value";
 }
 
 export function rememberValuation(identity: CardIdentity, valuation: Valuation, cache: Map<string, Valuation>): void {
   const key = identityKey(identity);
-  if (!key || valuation.source === "none" || valuation.source === "ai-estimate") return;
+  if (!key || valuation.source === "none" || valuation.source === "ai-estimate" || valuation.source === "seeded-demo") return;
   cache.set(key, valuation);
 }
 
