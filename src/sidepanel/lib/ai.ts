@@ -9,8 +9,8 @@ export interface AiCardResult {
 }
 
 type IdentifyMode = "card" | "slab-label";
-// Keep vision responses small enough to work with low remaining provider credit balances.
-const IDENTIFICATION_MAX_TOKENS = 256;
+// Leave enough room for the structured identity and estimate without truncating JSON.
+const IDENTIFICATION_MAX_TOKENS = 768;
 
 export async function identifyCard(
   imageDataUrl: string,
@@ -255,7 +255,7 @@ async function providerResponseError(response: Response, provider: ProviderSetti
 }
 
 function timeoutForMode(mode: IdentifyMode): number {
-  return mode === "slab-label" ? 6000 : 12000;
+  return mode === "slab-label" ? 20000 : 25000;
 }
 
 function timeoutMessage(provider: ProviderSettings, mode: IdentifyMode): string {
