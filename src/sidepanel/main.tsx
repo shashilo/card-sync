@@ -1158,10 +1158,24 @@ function DetailPanel({ track }: { track: TrackedCard }): JSX.Element {
 
       {track.valuation?.source && track.valuation.source !== "none" ? (
         <div className="valueBox">
-          <span>{valuationTitle(track.valuation)}</span>
-          <strong>
-            {formatPrice(track.valuation.low)}-{formatPrice(track.valuation.high)}
-          </strong>
+          {track.freeComps?.[0] ? (
+            <>
+              <span>Last sold · {track.freeComps[0].source}</span>
+              <strong>{formatPrice(track.freeComps[0].price)}</strong>
+              {track.freeComps[0].soldDate ? <small>{track.freeComps[0].soldDate}</small> : null}
+            </>
+          ) : track.valuation.priceGuideQuote ? (
+            <>
+              <span>{valuationTitle(track.valuation)}</span>
+              <strong>{formatPrice(track.valuation.priceGuideQuote.selectedPrice)}</strong>
+              <small>{track.valuation.priceGuideQuote.selectedCondition} guide price</small>
+            </>
+          ) : (
+            <>
+              <span>{track.valuation.source === "ai-estimate" ? "Provisional estimate" : valuationTitle(track.valuation)}</span>
+              <strong>{formatPrice((track.valuation.low + track.valuation.high) / 2)}</strong>
+            </>
+          )}
           <small>Suggested max bid: {formatPrice(track.valuation.maxBid)}</small>
           {track.priceLookup ? <small className={`priceStatus ${track.priceLookup.status}`}>{track.priceLookup.message}</small> : null}
         </div>
