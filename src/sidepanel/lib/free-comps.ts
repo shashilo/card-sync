@@ -71,31 +71,38 @@ export async function lookup130PointComps(identity: CardIdentity): Promise<FreeC
   if (identity.confidence < 0.5 || !query) return { status: "needs-identity", message: "Card needs a stronger identity before 130 Point can search sales.", comps: [] };
   const attempts: CompSearchAttempt[] = [];
   const allComps: SoldComp[] = [];
-  for (const searchQuery of queries) {
-    let tabId: number | undefined;
-    try {
-      const tab = await chrome.tabs.create({ url: `https://130point.com/sales/?search=${encodeURIComponent(searchQuery)}`, active: false });
-      tabId = tab.id;
-      if (!tabId) throw new Error("Chrome did not return a 130 Point tab ID.");
-      await waitFor130PointTab(tabId);
-      const deadline = Date.now() + 10_000;
-      let matches: SoldComp[] = [];
-      while (Date.now() < deadline) {
-        const [execution] = await chrome.scripting.executeScript({ target: { tabId }, func: read130PointSalesPage, args: [searchQuery] });
-        const snapshot = execution?.result;
-        matches = rankSoldComps(identity, snapshot?.comps ?? []);
-        if (matches.length || snapshot?.ready) break;
-        await new Promise((resolve) => setTimeout(resolve, 500));
+  let tabId: number | undefined;
+  try {
+    for (const searchQuery of queries) {
+      try {
+        const url = `https://130point.com/sales/?search=${encodeURIComponent(searchQuery)}`;
+        if (tabId === undefined) {
+          const tab = await chrome.tabs.create({ url, active: false });
+          tabId = tab.id;
+          if (!tabId) throw new Error("Chrome did not return a 130 Point tab ID.");
+        } else {
+          await chrome.tabs.update(tabId, { url });
+        }
+        await waitFor130PointTab(tabId);
+        const deadline = Date.now() + 10_000;
+        let matches: SoldComp[] = [];
+        while (Date.now() < deadline) {
+          const [execution] = await chrome.scripting.executeScript({ target: { tabId }, func: read130PointSalesPage, args: [searchQuery] });
+          const snapshot = execution?.result;
+          matches = rankSoldComps(identity, snapshot?.comps ?? []);
+          if (matches.length || snapshot?.ready) break;
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+        attempts.push({ source: "130 Point", query: searchQuery, status: matches.length ? "results" : "no-results", count: matches.length, message: matches.length ? `Found ${matches.length} sales; ranked against card identity.` : "No ranked sales for this query." });
+        allComps.push(...matches);
+        if (matches.some((comp) => (comp.matchScore ?? 0) >= 0.55)) break;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "130 Point lookup failed.";
+        attempts.push({ source: "130 Point", query: searchQuery, status: "error", count: 0, message });
       }
-      attempts.push({ source: "130 Point", query: searchQuery, status: matches.length ? "results" : "no-results", count: matches.length, message: matches.length ? `Found ${matches.length} sales; ranked against card identity.` : "No ranked sales for this query." });
-      allComps.push(...matches);
-      if (matches.some((comp) => (comp.matchScore ?? 0) >= 0.55)) break;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "130 Point lookup failed.";
-      attempts.push({ source: "130 Point", query: searchQuery, status: "error", count: 0, message });
-    } finally {
-      if (tabId !== undefined) await chrome.tabs.remove(tabId).catch(() => undefined);
     }
+  } finally {
+    if (tabId !== undefined) await chrome.tabs.remove(tabId).catch(() => undefined);
   }
   const comps = rankSoldComps(identity, dedupeComps(allComps)).slice(0, 8);
   return comps.length

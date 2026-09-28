@@ -22,54 +22,60 @@ export async function lookupCardLadderComps(identity: CardIdentity): Promise<Fre
   const queries = compSearchQueries(identity);
   const searchAttempts: CompSearchAttempt[] = [];
   const nearbyCandidates: SoldComp[] = [];
-
-  for (const searchQuery of queries) {
-    let tabId: number | undefined;
-    let lastSnapshot: CardLadderPageSnapshot | undefined;
-    try {
-      const tab = await chrome.tabs.create({ url: `${CARD_LADDER_SALES_URL}${encodeURIComponent(searchQuery)}`, active: false });
-      tabId = tab.id;
-      if (!tabId) throw new Error("Chrome did not return the temporary Card Ladder tab ID.");
-
-      await waitForTabLoad(tabId);
-      const deadline = Date.now() + RESULT_WAIT_MS;
-      while (Date.now() < deadline) {
-        const [execution] = await chrome.scripting.executeScript({ target: { tabId }, func: readCardLadderSalesPage });
-        lastSnapshot = execution?.result;
-        const matchedComps = rankSoldComps(identity, lastSnapshot?.comps ?? []);
-        if (matchedComps.length) nearbyCandidates.push(...matchedComps);
-        if (matchedComps.some((comp) => (comp.matchScore ?? 0) >= 0.55)) {
-          searchAttempts.push({ source: "Card Ladder", query: searchQuery, status: "results", count: matchedComps.length, message: `${matchedComps.length} sales ranked by player, year, card number, insert, and variant text.` });
-          return {
-            status: "free-comps-ready",
-            message: `Found ${matchedComps.length} Card Ladder sale${matchedComps.length === 1 ? "" : "s"}${matchedComps.some((comp) => comp.verified) ? ", including research-team verified sales" : ""}${searchQuery !== query ? ` with broader query “${searchQuery}”` : ""}.`,
-            comps: matchedComps,
-            searchAttempts
-          };
+  let tabId: number | undefined;
+  try {
+    for (const searchQuery of queries) {
+      let lastSnapshot: CardLadderPageSnapshot | undefined;
+      try {
+        const url = `${CARD_LADDER_SALES_URL}${encodeURIComponent(searchQuery)}`;
+        if (tabId === undefined) {
+          const tab = await chrome.tabs.create({ url, active: false });
+          tabId = tab.id;
+          if (!tabId) throw new Error("Chrome did not return the temporary Card Ladder tab ID.");
+        } else {
+          await chrome.tabs.update(tabId, { url });
         }
-        if (matchedComps.length && lastSnapshot?.resultsReady) break;
-        if (lastSnapshot && !lastSnapshot.loggedIn) {
-          searchAttempts.push({ source: "Card Ladder", query: searchQuery, status: "login-required", count: 0, message: "The page showed a sign-in state." });
-          return { status: "error", message: "Card Ladder opened a sign-in page. Sign in to your Pro account in Chrome and try again.", comps: [], searchAttempts };
+        await waitForTabLoad(tabId);
+
+        const deadline = Date.now() + RESULT_WAIT_MS;
+        while (Date.now() < deadline) {
+          const [execution] = await chrome.scripting.executeScript({ target: { tabId }, func: readCardLadderSalesPage });
+          lastSnapshot = execution?.result;
+          const matchedComps = rankSoldComps(identity, lastSnapshot?.comps ?? []);
+          if (matchedComps.length && lastSnapshot?.resultsReady) nearbyCandidates.push(...matchedComps);
+          if (matchedComps.some((comp) => (comp.matchScore ?? 0) >= 0.55)) {
+            searchAttempts.push({ source: "Card Ladder", query: searchQuery, status: "results", count: matchedComps.length, message: `${matchedComps.length} sales ranked by player, year, card number, insert, and variant text.` });
+            return {
+              status: "free-comps-ready",
+              message: `Found ${matchedComps.length} Card Ladder sale${matchedComps.length === 1 ? "" : "s"}${matchedComps.some((comp) => comp.verified) ? ", including research-team verified sales" : ""}${searchQuery !== query ? ` with broader query “${searchQuery}”` : ""}.`,
+              comps: matchedComps,
+              searchAttempts
+            };
+          }
+          if (matchedComps.length && lastSnapshot?.resultsReady) break;
+          if (lastSnapshot && !lastSnapshot.loggedIn) {
+            searchAttempts.push({ source: "Card Ladder", query: searchQuery, status: "login-required", count: 0, message: "The page showed a sign-in state." });
+            return { status: "error", message: "Card Ladder opened a sign-in page. Sign in to your Pro account in Chrome and try again.", comps: [], searchAttempts };
+          }
+          if (lastSnapshot?.resultsReady && lastSnapshot.resultCount === 0) break;
+          await new Promise((resolve) => setTimeout(resolve, 500));
         }
-        if (lastSnapshot?.resultsReady && lastSnapshot.resultCount === 0) break;
-        await new Promise((resolve) => setTimeout(resolve, 500));
+
+        const noSales = Boolean(lastSnapshot?.resultsReady && lastSnapshot.resultCount === 0);
+        searchAttempts.push({
+          source: "Card Ladder",
+          query: searchQuery,
+          status: noSales ? "no-results" : "timeout",
+          count: lastSnapshot?.resultCount ?? 0,
+          message: noSales ? "Card Ladder returned zero sales; trying a broader query." : "Card Ladder did not render results before the search timeout."
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Card Ladder lookup failed in Chrome.";
+        searchAttempts.push({ source: "Card Ladder", query: searchQuery, status: "error", count: 0, message });
       }
-
-      const noSales = Boolean(lastSnapshot?.resultsReady && lastSnapshot.resultCount === 0);
-      searchAttempts.push({
-        source: "Card Ladder",
-        query: searchQuery,
-        status: noSales ? "no-results" : "timeout",
-        count: lastSnapshot?.resultCount ?? 0,
-        message: noSales ? "Card Ladder returned zero sales; trying a broader query." : "Card Ladder did not render results before the search timeout."
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Card Ladder lookup failed in Chrome.";
-      searchAttempts.push({ source: "Card Ladder", query: searchQuery, status: "error", count: 0, message });
-    } finally {
-      if (tabId !== undefined) await chrome.tabs.remove(tabId).catch(() => undefined);
     }
+  } finally {
+    if (tabId !== undefined) await chrome.tabs.remove(tabId).catch(() => undefined);
   }
 
   const hadReadableNoSales = searchAttempts.some((attempt) => attempt.status === "no-results");
