@@ -175,6 +175,15 @@ function ensureOverlay(): ShadowRoot | undefined {
 
 function getLargestVideoRect(): Box | undefined {
   if (state.disabled) return undefined;
+  const livePlayer = document.querySelector<HTMLElement>(".LivePlayer_livePlayerVideo__k1zyE");
+  if (livePlayer) {
+    const rect = livePlayer.getBoundingClientRect();
+    const width = Math.max(0, Math.min(rect.right, window.innerWidth) - Math.max(rect.left, 0));
+    const height = Math.max(0, Math.min(rect.bottom, window.innerHeight) - Math.max(rect.top, 0));
+    if (width >= 160 && height >= 120) {
+      return { x: Math.max(rect.left, 0), y: Math.max(rect.top, 0), width, height };
+    }
+  }
   const videos = queryAll("video").filter((element): element is HTMLVideoElement => element instanceof HTMLVideoElement);
   let best: Box | undefined;
   let bestArea = 0;
