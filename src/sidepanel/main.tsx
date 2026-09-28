@@ -8,7 +8,7 @@ import { applyProviderPreset, providerPreset, requestCustomProviderPermission } 
 import { DEFAULT_SETTINGS, loadSettings, saveSettings } from "../shared/settings";
 import { appendDiagnosticLog, clearDiagnosticLog, readDiagnosticLog, type DiagnosticEntry } from "../shared/diagnostics";
 import type { BadgeTone, CardIdentity, ExtensionSettings, PageContext, PriceLookupState, ScanHistoryItem, TrackSummary, Valuation, VideoViewport } from "../shared/types";
-import { identifyCard, identifySlabLabel } from "./lib/ai";
+import { identifyCard } from "./lib/ai";
 import { detectCardBoxes } from "./lib/detector";
 import { clearShowHistory, listShowHistory, showKeyFromUrl, upsertScanHistoryItem } from "./lib/history";
 import { identityKey, inferIdentityFromContext } from "./lib/identity";
@@ -453,13 +453,6 @@ function App(): JSX.Element {
       logDiagnostic("Card crop failed", { trackId: track.id, detectionConfidence: track.detectionConfidence });
       return false;
     }
-    const slabLabelCrop = cropTrack(video, track, {
-      yRatio: 0,
-      heightRatio: 0.34,
-      maxSide: 384,
-      quality: 0.78
-    });
-
     const contextIdentity = inferIdentityFromContext(contextRef.current);
     const signature = scanSignature(contextIdentity, track, crop);
     const activeScan = activeScansRef.current.get(track.id);
@@ -469,6 +462,17 @@ function App(): JSX.Element {
       if (scanDecision.activeScan && activeScan) activeScansRef.current.set(track.id, { ...activeScan, ...scanDecision.activeScan });
       if (!scanDecision.shouldScan) return false;
       if (hasRecentScanSignature(recentScanSignaturesRef.current, signature, now)) return false;
+    }
+
+    // Keep the active request record stable until its response is applied. Updating it
+    // for every slightly different video frame makes a valid AI response look stale.
+    if (aiIdentificationInFlightRef.current) {
+      logDiagnostic("Card identification skipped", { reason: "another-request-in-flight", provider: settingsRef.current.provider.provider });
+      return false;
+    }
+    if (Date.now() < nextAiIdentificationAtRef.current) {
+      logDiagnostic("Card identification skipped", { reason: "provider-request-cooldown", provider: settingsRef.current.provider.provider });
+      return false;
     }
 
     const requestId = crypto.randomUUID();
@@ -515,69 +519,6 @@ function App(): JSX.Element {
     if (provider.provider === "mock" || !provider.apiKey.trim()) {
       logDiagnostic("AI request skipped", { reason: provider.provider === "mock" ? "mock-provider-selected" : "api-key-missing", provider: provider.provider });
       markTrack(track.id, { inFlight: false });
-      return true;
-    }
-
-    if (aiIdentificationInFlightRef.current) {
-      logDiagnostic("Card identification skipped", { reason: "another-request-in-flight", provider: provider.provider });
-      markTrack(track.id, { inFlight: false, updatedAt: Date.now() });
-      return true;
-    }
-    if (Date.now() < nextAiIdentificationAtRef.current) {
-      logDiagnostic("Card identification skipped", { reason: "provider-request-cooldown", provider: provider.provider });
-      markTrack(track.id, { inFlight: false, updatedAt: Date.now() });
-      return true;
-    }
-
-    const pageMentionsSlab = /\b(?:psa|bgs|sgc|cgc|slab|graded)\b/i.test(
-      `${contextRef.current?.auctionText ?? ""} ${contextRef.current?.title ?? ""}`
-    );
-    if (slabLabelCrop && pageMentionsSlab) {
-      aiIdentificationInFlightRef.current = true;
-      nextAiIdentificationAtRef.current = Date.now() + 8_000;
-      logDiagnostic("Slab label request started", { provider: provider.provider, model: provider.model, endpointHost: safeHost(provider.baseUrl) });
-      identifySlabLabel(slabLabelCrop.dataUrl, contextRef.current, settingsRef.current)
-        .then(({ identity, estimate, error: identificationError }) => {
-          logDiagnostic(identificationError ? "Slab label request failed" : "Slab label request completed", {
-            provider: provider.provider,
-            confidence: Math.round(identity.confidence * 100),
-            hasPlayer: Boolean(identity.player),
-            hasSet: Boolean(identity.set),
-            error: identificationError ?? ""
-          });
-          if (!isCurrentScan(track.id, signature, requestId)) return;
-          if (identity.confidence < 0.5) return;
-          const valuation = buildValuation(
-            identity,
-            sessionCacheRef.current,
-            estimate,
-            false
-          );
-          const compLinks = generateCompLinks(identity);
-          rememberValuation(identity, valuation, sessionCacheRef.current);
-          const stage = stageFor(identity, valuation);
-          markTrack(track.id, {
-            identity,
-            valuation,
-            compLinks,
-            stage,
-            inFlight: true,
-            updatedAt: Date.now()
-          });
-          persistTrackHistory(track, crop.dataUrl, {
-            identity,
-            valuation,
-            compLinks,
-            stage
-          }, signature).catch(() => undefined);
-          applyPriceGuide(track.id, track, crop.dataUrl, identity, signature, requestId).catch(() => undefined);
-        })
-        .catch((caught) => {
-          logDiagnostic("Slab label request failed", { provider: provider.provider, error: caught instanceof Error ? caught.message : "Unknown error" });
-        })
-        .finally(() => {
-          aiIdentificationInFlightRef.current = false;
-        });
       return true;
     }
 
