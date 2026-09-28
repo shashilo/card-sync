@@ -248,14 +248,12 @@ function renderTracks(tracks: TrackSummary[]): void {
   if (state.disabled) return;
   const target = ensureOverlay();
   if (!target) return;
-  const videoRect = getLargestVideoRect();
   target.querySelectorAll(".frame").forEach((node) => node.remove());
   target.querySelectorAll(".status").forEach((node) => node.remove());
   latestTracks = tracks;
 
   for (const track of tracks) {
-    const box = videoRect ? clampToRect(track.box, videoRect) : track.box;
-    if (!box) continue;
+    const box = track.box;
 
     const frame = document.createElement("div");
     frame.className = `frame ${track.badgeTone}`;
@@ -318,17 +316,6 @@ function handlePageClickForManualCapture(event: MouseEvent): void {
     event.clientY >= videoRect.y &&
     event.clientY <= videoRect.y + videoRect.height;
   if (insideVideo) requestManualCapture(latestTracks[0].id);
-}
-
-function clampToRect(box: Box, bounds: Box): Box | undefined {
-  const x1 = Math.max(box.x, bounds.x);
-  const y1 = Math.max(box.y, bounds.y);
-  const x2 = Math.min(box.x + box.width, bounds.x + bounds.width);
-  const y2 = Math.min(box.y + box.height, bounds.y + bounds.height);
-  const width = Math.max(0, x2 - x1);
-  const height = Math.max(0, y2 - y1);
-  if (width < 24 || height < 24) return undefined;
-  return { x: x1, y: y1, width, height };
 }
 
 function setScanning(next: boolean): void {
