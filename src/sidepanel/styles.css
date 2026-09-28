@@ -670,6 +670,47 @@ h3 {
   text-align: right;
 }
 
+.facts .identityOverrides {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 8px;
+  padding-top: 8px;
+}
+
+.identityOverrides label {
+  display: grid;
+  gap: 4px;
+  color: #94a3b8;
+  font-size: 10px;
+}
+
+.identityOverrides select,
+.printRunInput input {
+  width: 100%;
+  min-height: 32px;
+  border: 1px solid #334155;
+  border-radius: 5px;
+  background: #111827;
+  color: #f8fafc;
+  padding: 5px 8px;
+}
+
+.printRunInput {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 5px;
+}
+
+.printRunInput button {
+  min-height: 32px;
+  border: 0;
+  border-radius: 5px;
+  background: #334155;
+  color: #f8fafc;
+  padding: 0 9px;
+}
+
 .notes {
   display: grid;
   gap: 7px;

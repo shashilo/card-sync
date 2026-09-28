@@ -17,7 +17,7 @@ import { lookup130PointComps, lookupFreeComps, valuationFromFreeComps } from "./
 import type { FreeCompLookupResult } from "./lib/free-comps";
 import { lookupCardLadderComps } from "./lib/card-ladder";
 import { withMaxBidPercent, generateCompLinks, buildValuation, rememberValuation, stageFor } from "./lib/pricing";
-import { rememberCardFingerprint, shouldPersistScanHistory, shouldStartScanForFingerprint, type ActiveScanFingerprint } from "./lib/scan-gate";
+import { rememberCardFingerprint, sameCardFingerprint, shouldPersistScanHistory, shouldStartScanForFingerprint, type ActiveScanFingerprint } from "./lib/scan-gate";
 import { formatPrice, labelForTrack, priceLookupLabel, updateTrackedCards, type TrackedCard } from "./lib/tracker";
 import "./styles.css";
 
@@ -64,6 +64,7 @@ function App(): JSX.Element {
   const recentScanSignaturesRef = useRef(new Map<string, number>());
   const recentCardFingerprintsRef = useRef(new Map<string, number>());
   const activeScansRef = useRef(new Map<string, ActiveScan>());
+  const manualIdentityOverridesRef = useRef(new Map<string, { fingerprint: string; fields: Partial<Pick<CardIdentity, "numbered" | "serialNumber" | "autograph">> }>());
   const aiIdentificationInFlightRef = useRef(false);
   const nextAiIdentificationAtRef = useRef(0);
   const contextPrewarmRef = useRef(new Map<string, number>());
@@ -192,6 +193,45 @@ function App(): JSX.Element {
       endpointHost: safeHost(next.provider.baseUrl),
       model: next.provider.model || "(empty)"
     });
+  }
+
+  function overrideTrackIdentity(trackId: string, fields: Partial<Pick<CardIdentity, "numbered" | "serialNumber" | "autograph">>): void {
+    const track = tracksRef.current.find((candidate) => candidate.id === trackId);
+    if (!track?.identity) return;
+    const crop = videoRef.current ? cropTrack(videoRef.current, track) : undefined;
+    const fingerprint = crop?.fingerprint ?? activeScansRef.current.get(trackId)?.fingerprint ?? "";
+    if (fingerprint) {
+      const previous = manualIdentityOverridesRef.current.get(trackId);
+      manualIdentityOverridesRef.current.set(trackId, {
+        fingerprint,
+        fields: { ...previous?.fields, ...fields }
+      });
+    }
+    const changed = Object.entries(fields).map(([key, value]) => `${key}=${value ?? "unknown"}`).join(", ");
+    const identity: CardIdentity = {
+      ...track.identity,
+      ...fields,
+      evidence: [...new Set([...track.identity.evidence, `Manually set by user: ${changed}.`])].slice(-6)
+    };
+    const compLinks = generateCompLinks(identity);
+    markTrack(trackId, { identity, compLinks, updatedAt: Date.now() });
+    logDiagnostic("Card identity manually overridden", { trackId, numbered: identity.numbered ?? null, serialNumber: identity.serialNumber ?? "", autograph: identity.autograph ?? null });
+    persistTrackHistory(track, undefined, {
+      identity,
+      valuation: track.valuation,
+      compLinks,
+      freeComps: track.freeComps,
+      compSearchAttempts: track.compSearchAttempts,
+      maxBidPercent: settingsRef.current.maxBidPercent,
+      stage: track.stage,
+      priceLookup: track.priceLookup
+    }).catch(() => undefined);
+    if (crop && identity.confidence >= 0.5) {
+      const signature = activeScansRef.current.get(trackId)?.signature;
+      applyFreeComps(trackId, track, crop.dataUrl, identity, signature).catch((caught) => {
+        logDiagnostic("Manual identity comp refresh failed", { trackId, error: caught instanceof Error ? caught.message : "Unknown error" });
+      });
+    }
   }
 
   async function copyDiagnosticLog(): Promise<void> {
@@ -553,7 +593,11 @@ function App(): JSX.Element {
     aiIdentificationInFlightRef.current = true;
     nextAiIdentificationAtRef.current = Date.now() + 8_000;
     identifyCard(crop.dataUrl, contextRef.current, settingsRef.current)
-      .then(({ identity, estimate, error: identificationError }) => {
+      .then(({ identity: detectedIdentity, estimate, error: identificationError }) => {
+        const manualOverride = manualIdentityOverridesRef.current.get(track.id);
+        const identity = manualOverride && sameCardFingerprint(manualOverride.fingerprint, crop.fingerprint)
+          ? { ...detectedIdentity, ...manualOverride.fields, evidence: [...new Set([...detectedIdentity.evidence, "Applied the user's saved numbered/autograph override."])].slice(-6) }
+          : detectedIdentity;
         const currentActiveScan = activeScansRef.current.get(track.id);
         if (currentActiveScan?.requestId === requestId) {
           activeScansRef.current.set(track.id, { ...currentActiveScan, completed: true });
@@ -1083,7 +1127,7 @@ function App(): JSX.Element {
         )}
       </section>
 
-      {activeTrack ? <DetailPanel track={activeTrack} /> : null}
+      {activeTrack ? <DetailPanel track={activeTrack} onIdentityOverride={overrideTrackIdentity} /> : null}
 
       <HistoryPanel items={historyItems} onClear={clearCurrentShowHistory} />
     </main>
@@ -1190,7 +1234,10 @@ function Metric({ label, value }: { label: string; value: string }): JSX.Element
   );
 }
 
-function DetailPanel({ track }: { track: TrackedCard }): JSX.Element {
+function DetailPanel({ track, onIdentityOverride }: {
+  track: TrackedCard;
+  onIdentityOverride: (trackId: string, fields: Partial<Pick<CardIdentity, "numbered" | "serialNumber" | "autograph">>) => void;
+}): JSX.Element {
   return (
     <section className="detailPanel">
       <div className="detailHeader">
@@ -1235,7 +1282,7 @@ function DetailPanel({ track }: { track: TrackedCard }): JSX.Element {
         </div>
       )}
 
-      {track.identity ? <IdentityFacts identity={track.identity} /> : null}
+      {track.identity ? <IdentityFacts identity={track.identity} onOverride={(fields) => onIdentityOverride(track.id, fields)} /> : null}
       {track.valuation ? <ValuationNotes valuation={track.valuation} /> : null}
       {track.freeComps?.length ? <FreeCompsPanel comps={track.freeComps} /> : null}
 
@@ -1459,7 +1506,13 @@ function FreeCompsPanel({ comps }: { comps: NonNullable<TrackedCard["freeComps"]
   );
 }
 
-function IdentityFacts({ identity }: { identity: CardIdentity }): JSX.Element {
+function IdentityFacts({ identity, onOverride }: {
+  identity: CardIdentity;
+  onOverride: (fields: Partial<Pick<CardIdentity, "numbered" | "serialNumber" | "autograph">>) => void;
+}): JSX.Element {
+  const serialRun = identity.serialNumber?.match(/\/(\d+)\s*$/)?.[1] ?? "";
+  const [runDraft, setRunDraft] = useState(serialRun);
+  useEffect(() => setRunDraft(serialRun), [serialRun]);
   const facts = [
     ["Player", identity.player],
     ["Card type", identity.cardType],
@@ -1468,8 +1521,6 @@ function IdentityFacts({ identity }: { identity: CardIdentity }): JSX.Element {
     ["Set", identity.set],
     ["Number", identity.cardNumber],
     ["Parallel", identity.parallel],
-    ["Numbered", identity.numbered === undefined ? "Unclear" : identity.numbered ? identity.serialNumber || "Yes" : "No"],
-    ["Autograph", identity.autograph === undefined ? "Unclear" : identity.autograph ? "Yes" : "No"],
     ["Grade", [identity.gradeCompany, identity.grade].filter(Boolean).join(" ")]
   ].filter(([, value]) => value);
 
@@ -1485,6 +1536,38 @@ function IdentityFacts({ identity }: { identity: CardIdentity }): JSX.Element {
       <div>
         <span>Confidence</span>
         <strong>{Math.round(identity.confidence * 100)}%</strong>
+      </div>
+      <div className="identityOverrides">
+        <label>
+          Numbered
+          <select value={identity.numbered === undefined ? "unknown" : String(identity.numbered)} onChange={(event) => {
+            const value = event.target.value;
+            onOverride(value === "unknown" ? { numbered: undefined } : value === "true" ? { numbered: true } : { numbered: false, serialNumber: undefined });
+          }}>
+            <option value="unknown">Unknown</option>
+            <option value="true">Yes</option>
+            <option value="false">No</option>
+          </select>
+        </label>
+        <label>
+          Autographed
+          <select value={identity.autograph === undefined ? "unknown" : String(identity.autograph)} onChange={(event) => {
+            const value = event.target.value;
+            onOverride({ autograph: value === "unknown" ? undefined : value === "true" });
+          }}>
+            <option value="unknown">Unknown</option>
+            <option value="true">Yes</option>
+            <option value="false">No</option>
+          </select>
+        </label>
+        <label>
+          Print run (out of)
+          <div className="printRunInput">
+            <span>/</span>
+            <input type="number" min="1" step="1" value={runDraft} onChange={(event) => setRunDraft(event.target.value)} placeholder="99" />
+            <button type="button" disabled={!/^\d+$/.test(runDraft) || Number(runDraft) < 1} onClick={() => onOverride({ numbered: true, serialNumber: `/${runDraft}` })}>Apply</button>
+          </div>
+        </label>
       </div>
     </div>
   );
