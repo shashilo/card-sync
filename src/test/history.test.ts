@@ -110,6 +110,23 @@ describe("scan history", () => {
     expect(item.priceLookup?.message).toContain("price");
   });
 
+  it("persists the selected max bid percentage and comp search trail", () => {
+    const item = buildScanHistoryItem({
+      ...baseInput,
+      maxBidPercent: 80,
+      compSearchAttempts: [{
+        source: "Card Ladder",
+        query: "1986 Michael Jordan Fleer #57",
+        status: "results",
+        count: 2,
+        message: "Sales rows were extracted."
+      }]
+    });
+
+    expect(item.maxBidPercent).toBe(80);
+    expect(item.compSearchAttempts?.[0]).toMatchObject({ source: "Card Ladder", count: 2, status: "results" });
+  });
+
   it("keeps manual comp links on manual-ready history rows", () => {
     const item = buildScanHistoryItem({
       ...baseInput,

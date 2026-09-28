@@ -461,6 +461,79 @@ h3 {
   line-height: 1.35;
 }
 
+.historyPrice {
+  display: grid;
+  gap: 2px;
+  margin-top: 5px;
+}
+
+.historyPrice span {
+  color: #94a3b8;
+  font-size: 10px;
+}
+
+.historyPrice strong {
+  color: #bbf7d0;
+  font-size: 15px;
+}
+
+.historyPrice small {
+  margin-top: 0;
+}
+
+.historyDecision {
+  margin-top: 8px;
+  border-top: 1px solid #263244;
+  padding-top: 7px;
+}
+
+.historyDecision summary {
+  color: #bfdbfe;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.historyDecisionBody {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.historyDecisionBody section {
+  display: grid;
+  gap: 4px;
+}
+
+.historyDecisionBody section > strong {
+  color: #e2e8f0;
+  font-size: 10px;
+}
+
+.historyDecisionBody p,
+.historySale small {
+  overflow-wrap: anywhere;
+  color: #94a3b8;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.historySale {
+  display: grid;
+  gap: 2px;
+  border-radius: 5px;
+  background: #202938;
+  padding: 6px;
+  color: #bfdbfe;
+  font-size: 10px;
+  text-decoration: none;
+}
+
+.historySale span {
+  color: #bbf7d0;
+  font-weight: 700;
+}
+
 .historyItem small {
   display: flex;
   align-items: center;

@@ -140,6 +140,7 @@ export interface TrackSummary {
   valuation?: Valuation;
   compLinks: CompLink[];
   freeComps?: SoldComp[];
+  compSearchAttempts?: CompSearchAttempt[];
   inFlight?: boolean;
   priceLookup?: PriceLookupState;
   updatedAt: number;
@@ -160,6 +161,8 @@ export interface ScanHistoryItem {
   valuation?: Valuation;
   compLinks: CompLink[];
   freeComps?: SoldComp[];
+  compSearchAttempts?: CompSearchAttempt[];
+  maxBidPercent?: number;
   priceLookup?: PriceLookupState;
   evidence: string[];
   warnings: string[];

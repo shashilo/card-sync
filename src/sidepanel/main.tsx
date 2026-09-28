@@ -741,6 +741,7 @@ function App(): JSX.Element {
     });
     const ladderResult = initialLadderResult ?? await lookupCardLadderComps(identity);
     const result = ladderResult.comps.length ? ladderResult : await lookupFreeComps(identity, compLinks);
+    const compSearchAttempts = [...(ladderResult.searchAttempts ?? []), ...(ladderResult.comps.length ? [] : result.searchAttempts ?? [])];
     if (!ladderResult.comps.length) {
       for (const attempt of result.searchAttempts ?? []) {
         logDiagnostic("eBay sold search attempt", { trackId, query: attempt.query, status: attempt.status, count: attempt.count, message: attempt.message });
@@ -785,6 +786,7 @@ function App(): JSX.Element {
       valuation,
       compLinks,
       freeComps: result.comps,
+      compSearchAttempts,
       stage,
       inFlight: false,
       priceLookup,
@@ -795,6 +797,8 @@ function App(): JSX.Element {
       valuation,
       compLinks,
       freeComps: result.comps,
+      compSearchAttempts,
+      maxBidPercent: settingsRef.current.maxBidPercent,
       stage,
       priceLookup
     }, signature);
@@ -874,7 +878,12 @@ function App(): JSX.Element {
   async function persistTrackHistory(
     track: TrackedCard,
     cropImageDataUrl: string | undefined,
-    patch: Pick<TrackedCard, "identity" | "valuation" | "compLinks" | "stage"> & { freeComps?: TrackedCard["freeComps"]; priceLookup?: PriceLookupState },
+    patch: Pick<TrackedCard, "identity" | "valuation" | "compLinks" | "stage"> & {
+      freeComps?: TrackedCard["freeComps"];
+      compSearchAttempts?: TrackedCard["compSearchAttempts"];
+      maxBidPercent?: number;
+      priceLookup?: PriceLookupState;
+    },
     signature?: string
   ): Promise<void> {
     const showKey = showKeyRef.current;
@@ -905,6 +914,8 @@ function App(): JSX.Element {
       valuation: patch.valuation,
       compLinks: patch.compLinks,
       freeComps: patch.freeComps,
+      compSearchAttempts: patch.compSearchAttempts,
+      maxBidPercent: patch.maxBidPercent ?? settingsRef.current.maxBidPercent,
       priceLookup: patch.priceLookup
     });
 
@@ -1252,22 +1263,13 @@ function HistoryPanel({ items, onClear }: { items: ScanHistoryItem[]; onClear: (
                   <span className={`dot ${item.badgeTone}`} />
                   <strong>{item.identity?.player || item.identity?.rawText || "Card candidate"}</strong>
                 </div>
-                <p>{item.label}</p>
+                <HistoryPriceSummary item={item} />
                 <small>
                   <Clock3 size={12} />
                   {formatHistoryTime(item.lastSeenAt)} · {Math.round((item.identity?.confidence ?? item.detectionConfidence) * 100)}%
                 </small>
                 {item.priceLookup ? <small className={`priceStatus ${item.priceLookup.status}`}>{priceLookupLabel(item.priceLookup)}</small> : null}
-                {item.freeComps?.length ? <p>{item.freeComps.length} {item.freeComps[0]?.source ?? "free"} comp{item.freeComps.length === 1 ? "" : "s"} captured</p> : null}
-                {item.compLinks.length ? (
-                  <div className="miniLinks">
-                    {item.compLinks.slice(0, 3).map((link) => (
-                      <a href={link.url} key={link.url} rel="noreferrer" target="_blank">
-                        {link.source}
-                      </a>
-                    ))}
-                  </div>
-                ) : null}
+                <HistoryDecisionDetails item={item} />
               </div>
             </article>
           ))}
@@ -1276,6 +1278,90 @@ function HistoryPanel({ items, onClear }: { items: ScanHistoryItem[]; onClear: (
         <p className="empty">No saved scans for this show yet.</p>
       )}
     </section>
+  );
+}
+
+function HistoryPriceSummary({ item }: { item: ScanHistoryItem }): JSX.Element {
+  const latestSale = item.freeComps?.[0];
+  const guide = item.valuation?.priceGuideQuote;
+  const estimate = item.valuation && item.valuation.source !== "none" ? (item.valuation.low + item.valuation.high) / 2 : undefined;
+  const referencePrice = latestSale?.price ?? guide?.selectedPrice ?? estimate;
+  const referenceLabel = latestSale ? `Last sold · ${latestSale.source}` : guide ? "Price guide" : estimate ? "Provisional estimate" : "No price found";
+
+  return (
+    <div className="historyPrice">
+      <span>{referenceLabel}</span>
+      <strong>{referencePrice ? formatPrice(referencePrice) : "—"}</strong>
+      {latestSale?.soldDate ? <small>{latestSale.soldDate}</small> : null}
+      {item.valuation && item.valuation.source !== "none" ? (
+        <small>
+          Suggested max bid: {formatPrice(item.valuation.maxBid)}
+          {item.maxBidPercent !== undefined ? ` (${item.maxBidPercent}%)` : ""}
+        </small>
+      ) : null}
+    </div>
+  );
+}
+
+function HistoryDecisionDetails({ item }: { item: ScanHistoryItem }): JSX.Element {
+  const valuation = item.valuation;
+  const latestSale = item.freeComps?.[0];
+  const guide = valuation?.priceGuideQuote;
+  const referencePrice = latestSale?.price ?? guide?.selectedPrice ?? (valuation && valuation.source !== "none" ? (valuation.low + valuation.high) / 2 : undefined);
+  const referenceSource = latestSale?.source ?? (guide ? `${guide.provider} · ${guide.selectedCondition}` : valuation?.source ?? "No priced source");
+  const hasDetails = Boolean(item.freeComps?.length || item.compSearchAttempts?.length || valuation || item.identity?.evidence?.length);
+
+  return (
+    <details className="historyDecision">
+      <summary>Price sources &amp; decision</summary>
+      {hasDetails ? (
+        <div className="historyDecisionBody">
+          <section>
+            <strong>Decision</strong>
+            {referencePrice !== undefined ? <p>Reference: {formatPrice(referencePrice)} from {referenceSource}{latestSale?.soldDate ? ` (${latestSale.soldDate})` : ""}.</p> : <p>No usable price source was found.</p>}
+            {valuation && valuation.source !== "none" ? (
+              <p>
+                {item.maxBidPercent !== undefined && referencePrice !== undefined
+                  ? `${formatPrice(referencePrice)} × ${item.maxBidPercent}% = ${formatPrice(valuation.maxBid)} suggested max bid.`
+                  : `Recorded suggested max bid: ${formatPrice(valuation.maxBid)}.`}
+              </p>
+            ) : null}
+            {valuation?.reasons.map((reason, index) => <p key={`reason-${index}`}>Reason: {reason}</p>)}
+            {valuation?.warnings.map((warning, index) => <p key={`warning-${index}`}>Caution: {warning}</p>)}
+          </section>
+
+          {item.compSearchAttempts?.length ? (
+            <section>
+              <strong>Search attempts</strong>
+              {item.compSearchAttempts.map((attempt, index) => (
+                <p key={`${attempt.source}-${attempt.query}-${index}`}>
+                  {attempt.source} · “{attempt.query}” · {attempt.status} · {attempt.count} results — {attempt.message}
+                </p>
+              ))}
+            </section>
+          ) : null}
+
+          {item.freeComps?.length ? (
+            <section>
+              <strong>Sales used for comparison</strong>
+              {item.freeComps.map((comp, index) => (
+                <a className="historySale" href={comp.url} key={`${comp.url}-${index}`} rel="noreferrer" target="_blank">
+                  <span>{formatPrice(comp.price)} · {comp.source}{comp.soldDate ? ` · ${comp.soldDate}` : ""}{comp.verified ? " · Verified" : ""}</span>
+                  <small>{comp.title}</small>
+                </a>
+              ))}
+            </section>
+          ) : null}
+
+          {item.identity?.evidence?.length ? <section><strong>Card identity evidence</strong>{item.identity.evidence.map((entry, index) => <p key={`evidence-${index}`}>{entry}</p>)}</section> : null}
+          {item.compLinks.length ? (
+            <div className="miniLinks">
+              {item.compLinks.map((link) => <a href={link.url} key={link.url} rel="noreferrer" target="_blank">{link.source}</a>)}
+            </div>
+          ) : null}
+        </div>
+      ) : <p>No pricing decision details were saved for this scan.</p>}
+    </details>
   );
 }
 
