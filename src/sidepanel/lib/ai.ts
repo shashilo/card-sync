@@ -9,6 +9,8 @@ export interface AiCardResult {
 }
 
 type IdentifyMode = "card" | "slab-label";
+// Keep vision responses small enough to work with low remaining provider credit balances.
+const IDENTIFICATION_MAX_TOKENS = 256;
 
 export async function identifyCard(
   imageDataUrl: string,
@@ -60,9 +62,8 @@ async function identifyWithOpenAiCompatible(
 ): Promise<AiCardResult> {
   const body: Record<string, unknown> = {
     model: provider.model,
-    // OpenRouter otherwise defaults to the model's very large output limit,
-    // which can exceed the account's available credits before generation starts.
-    max_tokens: 1200,
+    // OpenRouter checks this allowance against available credits before generation starts.
+    max_tokens: IDENTIFICATION_MAX_TOKENS,
     temperature: 0.1,
     messages: [
       { role: "system", content: buildPrompt(mode) },
@@ -127,7 +128,7 @@ async function identifyWithAnthropic(
     },
     body: JSON.stringify({
       model: provider.model,
-      max_tokens: 1200,
+      max_tokens: IDENTIFICATION_MAX_TOKENS,
       temperature: 0.1,
       system: buildPrompt(mode),
       messages: [
@@ -199,7 +200,9 @@ function contextText(context: PageContext | undefined): string {
 }
 
 function parseProviderJson(text: string | undefined, fallback: CardIdentity): AiCardResult {
-  if (!text) return { identity: fallback };
+  if (!text?.trim()) {
+    return { identity: fallback, error: "AI provider returned no identification text. Check that the selected model can read images and return JSON." };
+  }
   const parsed = JSON.parse(stripJsonFence(text)) as Record<string, unknown>;
   return {
     identity: coerceIdentity(parsed.identity ?? parsed, fallback),

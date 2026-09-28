@@ -64,6 +64,8 @@ function App(): JSX.Element {
   const recentScanSignaturesRef = useRef(new Map<string, number>());
   const recentCardFingerprintsRef = useRef(new Map<string, number>());
   const activeScansRef = useRef(new Map<string, ActiveScan>());
+  const aiIdentificationInFlightRef = useRef(false);
+  const nextAiIdentificationAtRef = useRef(0);
   const contextPrewarmRef = useRef(new Map<string, number>());
   const sessionCacheRef = useRef(new Map<string, Valuation>());
   const lastDetectorLogAtRef = useRef(0);
@@ -402,7 +404,7 @@ function App(): JSX.Element {
     for (const track of currentTracks) {
       const stableFor = now - (track.stableSince ?? track.firstSeenAt);
       const visibleFor = now - track.firstSeenAt;
-      const veryRecentlyRequested = track.identifyRequestedAt && now - track.identifyRequestedAt < 900;
+      const veryRecentlyRequested = track.identifyRequestedAt && now - track.identifyRequestedAt < 10_000;
       const readyForFastAttempt =
         stableFor >= settingsRef.current.identifyStableAfterMs ||
         visibleFor >= 450 ||
@@ -516,10 +518,23 @@ function App(): JSX.Element {
       return true;
     }
 
+    if (aiIdentificationInFlightRef.current) {
+      logDiagnostic("Card identification skipped", { reason: "another-request-in-flight", provider: provider.provider });
+      markTrack(track.id, { inFlight: false, updatedAt: Date.now() });
+      return true;
+    }
+    if (Date.now() < nextAiIdentificationAtRef.current) {
+      logDiagnostic("Card identification skipped", { reason: "provider-request-cooldown", provider: provider.provider });
+      markTrack(track.id, { inFlight: false, updatedAt: Date.now() });
+      return true;
+    }
+
     const pageMentionsSlab = /\b(?:psa|bgs|sgc|cgc|slab|graded)\b/i.test(
       `${contextRef.current?.auctionText ?? ""} ${contextRef.current?.title ?? ""}`
     );
     if (slabLabelCrop && pageMentionsSlab) {
+      aiIdentificationInFlightRef.current = true;
+      nextAiIdentificationAtRef.current = Date.now() + 8_000;
       logDiagnostic("Slab label request started", { provider: provider.provider, model: provider.model, endpointHost: safeHost(provider.baseUrl) });
       identifySlabLabel(slabLabelCrop.dataUrl, contextRef.current, settingsRef.current)
         .then(({ identity, estimate, error: identificationError }) => {
@@ -559,13 +574,19 @@ function App(): JSX.Element {
         })
         .catch((caught) => {
           logDiagnostic("Slab label request failed", { provider: provider.provider, error: caught instanceof Error ? caught.message : "Unknown error" });
+        })
+        .finally(() => {
+          aiIdentificationInFlightRef.current = false;
         });
+      return true;
     }
 
     logDiagnostic("Card identification request started", { provider: provider.provider, model: provider.model, endpointHost: safeHost(provider.baseUrl) });
+    aiIdentificationInFlightRef.current = true;
+    nextAiIdentificationAtRef.current = Date.now() + 8_000;
     identifyCard(crop.dataUrl, contextRef.current, settingsRef.current)
       .then(({ identity, estimate, error: identificationError }) => {
-        logDiagnostic(identificationError ? "Card identification timed out" : "Card identification response received", {
+        logDiagnostic(identificationError ? "Card identification failed" : "Card identification response received", {
           provider: provider.provider,
           confidence: Math.round(identity.confidence * 100),
           hasPlayer: Boolean(identity.player),
@@ -620,6 +641,9 @@ function App(): JSX.Element {
           stage: "error",
           label: `AI error: ${message}`
         });
+      })
+      .finally(() => {
+        aiIdentificationInFlightRef.current = false;
       });
 
     return true;
