@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "CardSync Sudden-Death POC",
   "description": "Live sports-card detection, provisional value ranges, and comp links for Whatnot sudden-death auctions.",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "action": {
     "default_title": "Open CardSync"
   },

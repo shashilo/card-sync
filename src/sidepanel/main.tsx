@@ -907,6 +907,7 @@ function App(): JSX.Element {
         <div>
           <p className="eyebrow">Whatnot sudden-death POC</p>
           <h1>CardSync</h1>
+          <p className="versionLabel">Version {chrome.runtime.getManifest().version}</p>
         </div>
         <div className="topbarActions">
           <button className={`iconButton ${diagnosticsOpen ? "selected" : ""}`} type="button" title="Diagnostics" aria-label="Diagnostics" onClick={() => setDiagnosticsOpen((open) => !open)}>
