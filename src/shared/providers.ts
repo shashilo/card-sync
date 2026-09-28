@@ -33,7 +33,7 @@ export const PROVIDER_PRESETS: Record<ProviderKind, ProviderPreset> = {
     label: "OpenRouter",
     shortLabel: "OpenRouter",
     baseUrl: "https://openrouter.ai/api/v1",
-    model: "~openai/gpt-latest",
+    model: "openai/gpt-5.4-mini",
     keyPlaceholder: "OpenRouter API key",
     baseUrlReadonly: true,
     help: "Uses OpenRouter's OpenAI-compatible chat completions API."
@@ -83,11 +83,16 @@ export function normalizeProviderSettings(saved?: Partial<ProviderSettings>): Pr
   }
 
   const preset = providerPreset(provider);
+  const savedModel = saved?.model || preset.model;
   return {
     provider,
     apiKey: saved?.apiKey ?? "",
     baseUrl: saved?.baseUrl || preset.baseUrl,
-    model: saved?.model || preset.model
+    // Replace the old dynamic default with a stable vision model while preserving
+    // models the user explicitly selected.
+    model: provider === "openrouter" && savedModel === "~openai/gpt-latest"
+      ? preset.model
+      : savedModel
   };
 }
 

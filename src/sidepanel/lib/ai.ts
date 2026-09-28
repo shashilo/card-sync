@@ -77,7 +77,7 @@ async function identifyWithOpenAiCompatible(
     ]
   };
 
-  if (provider.provider === "openai") {
+  if (provider.provider === "openai" || provider.provider === "openrouter") {
     body.response_format = { type: "json_object" };
   }
 
@@ -172,8 +172,10 @@ function buildPrompt(mode: IdentifyMode): string {
           "Do not identify from card art when the slab label text is missing."
         ]
       : [
-          "Identify the visible card if possible. Use page text as weak evidence, not truth.",
-          "If a graded slab label is visible, read the label text first because it is stronger evidence than card art."
+          "Identify the card in the image. Read the printed player name on the card face, especially the name banner at the bottom, and transcribe it into identity.player.",
+          "If a graded slab is visible, use both the slab label and the card face. Do not require the slab label to identify a clearly readable card.",
+          "Use page or auction text only as weak supporting evidence; never substitute it for visible card text.",
+          "When part of the player name is readable, return your best transcription with reduced confidence rather than leaving player blank."
         ];
   const prompt = [
     "You identify sports trading cards in livestream screenshots for a sudden-death auction helper.",
