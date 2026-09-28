@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildDetectionScanPlan, expandBox } from "../sidepanel/lib/detector";
+import { buildDetectionScanPlan, expandBox, frameToViewportBox } from "../sidepanel/lib/detector";
 
 describe("card detector scan plan", () => {
   it("scans the full captured screen instead of a nested video sub-rectangle", () => {
@@ -32,5 +32,13 @@ describe("card detector scan plan", () => {
 
     expect(plan.aspectRatios.some((ratio) => ratio < 0.8)).toBe(true);
     expect(plan.aspectRatios.some((ratio) => ratio > 1.2)).toBe(true);
+  });
+
+  it("centers letterboxed captured frames in the browser viewport", () => {
+    const box = frameToViewportBox({ x: 0, y: 0, width: 1920, height: 1080 }, 1920, 1080, 1000, 1000);
+    expect(box.x).toBeCloseTo(0);
+    expect(box.y).toBeCloseTo(218.75);
+    expect(box.width).toBeCloseTo(1000);
+    expect(box.height).toBeCloseTo(562.5);
   });
 });

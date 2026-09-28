@@ -12,6 +12,18 @@ export interface DetectionScanPlan {
   aspectRatios: number[];
 }
 
+export function frameToViewportBox(box: Box, frameWidth: number, frameHeight: number, viewportWidth: number, viewportHeight: number): Box {
+  const scale = Math.min(viewportWidth / Math.max(1, frameWidth), viewportHeight / Math.max(1, frameHeight));
+  const offsetX = (viewportWidth - frameWidth * scale) / 2;
+  const offsetY = (viewportHeight - frameHeight * scale) / 2;
+  return {
+    x: offsetX + box.x * scale,
+    y: offsetY + box.y * scale,
+    width: box.width * scale,
+    height: box.height * scale
+  };
+}
+
 const CARD_ASPECT_RATIOS = [0.56, 0.63, 0.72, 0.78, 1, 1.25, 1.4, 1.6, 1.78];
 
 function clamp(value: number, min: number, max: number): number {
@@ -181,8 +193,6 @@ export function detectCardBoxes(
   const viewportHeight = viewport?.viewportHeight || frameHeight;
 
   const candidates: DetectionBox[] = [];
-  const outputScaleX = viewportWidth / analysisWidth;
-  const outputScaleY = viewportHeight / analysisHeight;
   const { searchBounds, minHeight, maxHeight, aspectRatios } = buildDetectionScanPlan(
     analysisWidth,
     analysisHeight
@@ -227,10 +237,7 @@ export function detectCardBoxes(
           const expanded = expandBox({ x, y, width: w, height: h }, searchBounds);
 
           candidates.push({
-            x: expanded.x * outputScaleX,
-            y: expanded.y * outputScaleY,
-            width: expanded.width * outputScaleX,
-            height: expanded.height * outputScaleY,
+            ...frameToViewportBox(expanded, analysisWidth, analysisHeight, viewportWidth, viewportHeight),
             confidence: clamp(score, 0, 0.96)
           });
         }
