@@ -552,7 +552,7 @@ function App(): JSX.Element {
           identity,
           sessionCacheRef.current,
           estimate,
-          false
+          settingsRef.current.allowAiEstimatedValues
         );
         const compLinks = generateCompLinks(identity);
         rememberValuation(identity, valuation, sessionCacheRef.current);

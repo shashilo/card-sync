@@ -172,10 +172,13 @@ function buildPrompt(mode: IdentifyMode): string {
           "Do not identify from card art when the slab label text is missing."
         ]
       : [
-          "Identify the card in the image. Read the printed player name on the card face, especially the name banner at the bottom, and transcribe it into identity.player.",
-          "If a graded slab is visible, use both the slab label and the card face. Do not require the slab label to identify a clearly readable card.",
+          "Identify the specific card shown, not only the athlete. Extract the card's year, manufacturer/set, card number, parallel/variation, grade, and serial number when visible, along with the player name.",
+          "Inspect the design, logos, borders, team, jersey, card number, and any printed text to distinguish the product and variant. Put the best identifiable set or product name in identity.set.",
+          "Read the printed player name on the card face, especially the name banner at the bottom, and transcribe it into identity.player.",
+          "If a graded slab is visible, use both the slab label and the card face. The slab label can provide year, set, card number, and grade; the card face can provide the player and variant details.",
           "Use page or auction text only as weak supporting evidence; never substitute it for visible card text.",
-          "When part of the player name is readable, return your best transcription with reduced confidence rather than leaving player blank."
+          "Do not stop after identifying the player. Return every field you can support from the image, and list plausible set/parallel alternatives when the exact product remains uncertain.",
+          "When text or a product detail is partly readable, return the best transcription or identification with appropriately reduced confidence rather than leaving the field blank."
         ];
   const prompt = [
     "You identify sports trading cards in livestream screenshots for a sudden-death auction helper.",
