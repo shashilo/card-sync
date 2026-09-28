@@ -186,4 +186,5 @@ export interface ExtensionSettings {
   maxTrackedCards: number;
   allowAiEstimatedValues: boolean;
   maxBidPercent: number;
+  autoScan: boolean;
 }

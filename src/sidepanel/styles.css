@@ -22,12 +22,30 @@ select {
 }
 
 .app {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 14px;
   min-width: 320px;
   padding: 14px;
 }
+
+.drawer {
+  position: fixed;
+  z-index: 20;
+  top: 0;
+  bottom: 0;
+  width: min(92vw, 420px);
+  overflow-y: auto;
+  background: #101318;
+  box-shadow: 0 0 28px rgba(0, 0, 0, 0.55);
+  padding: 14px;
+}
+
+.settingsDrawer { right: 0; }
+.diagnosticsDrawer { left: 0; }
+.drawer .settingsPanel,
+.drawer .diagnosticsPanel { margin: 0; }
 
 .topbar,
 .controlBand,

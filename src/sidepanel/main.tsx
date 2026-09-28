@@ -360,6 +360,7 @@ function App(): JSX.Element {
     if (!video || !canvas || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
 
     const now = Date.now();
+    if (!settingsRef.current.autoScan) return;
     const currentSettings = settingsRef.current;
     const targetTabId = captureTabIdRef.current;
     if (targetTabId && now - lastContextPullAtRef.current > 500) {
@@ -402,6 +403,17 @@ function App(): JSX.Element {
     prewarmIdentities(nextTracks, now).catch((caught) => {
       setError(caught instanceof Error ? caught.message : "Identification failed.");
     });
+  }
+
+  function scanNow(): void {
+    if (!streamRef.current) {
+      startScanning();
+      return;
+    }
+    const previous = settingsRef.current.autoScan;
+    settingsRef.current.autoScan = true;
+    runScanTick();
+    settingsRef.current.autoScan = previous;
   }
 
   async function prewarmIdentities(currentTracks: TrackedCard[], now: number): Promise<void> {
@@ -1012,10 +1024,11 @@ function App(): JSX.Element {
       </header>
 
       <section className="controlBand">
-        <button className="primaryButton" type="button" onClick={scanning ? stopScanning : startScanning}>
-          {scanning ? <Square size={17} /> : <Play size={17} />}
-          {scanning ? "Stop scanning" : "Arm from toolbar"}
+        <button className="primaryButton" type="button" onClick={scanning ? (settings.autoScan ? stopScanning : scanNow) : startScanning}>
+          {scanning ? (settings.autoScan ? <Square size={17} /> : <Crosshair size={17} />) : <Play size={17} />}
+          {scanning ? (settings.autoScan ? "Stop scanning" : "Scan card") : "Arm from toolbar"}
         </button>
+        {!settings.autoScan && scanning ? <button className="secondaryButton" type="button" onClick={stopScanning}><Square size={15} /> Stop</button> : null}
         <div className={`statusPill ${scanning ? "active" : ""}`}>
           {scanning ? <Loader2 size={14} className="spin" /> : <Crosshair size={14} />}
           {scanning ? "Live prewarm running" : "Toolbar click arms capture"}
@@ -1029,8 +1042,8 @@ function App(): JSX.Element {
         </section>
       ) : null}
 
-      {settingsOpen ? <SettingsPanel settings={settings} onChange={persistSettings} /> : null}
-      {diagnosticsOpen ? <DiagnosticsPanel entries={diagnostics} copied={diagnosticsCopied} onCopy={copyDiagnosticLog} onDownload={downloadDiagnosticLog} onClear={clearDiagnostics} /> : null}
+      {settingsOpen ? <aside className="drawer settingsDrawer"><SettingsPanel settings={settings} onChange={persistSettings} /></aside> : null}
+      {diagnosticsOpen ? <aside className="drawer diagnosticsDrawer"><DiagnosticsPanel entries={diagnostics} copied={diagnosticsCopied} onCopy={copyDiagnosticLog} onDownload={downloadDiagnosticLog} onClear={clearDiagnostics} /></aside> : null}
 
       <section className="hudGrid">
         <Metric label="Tracked" value={tracks.length.toString()} />
@@ -1565,6 +1578,10 @@ function SettingsPanel({
           onChange={(event) => setDraft({ ...draft, maxBidPercent: Number(event.target.value) })}
         />
         <span className="helper">Uses the latest sold comp when available, otherwise the configured price guide or provisional estimate.</span>
+      </label>
+      <label className="checkRow">
+        <input type="checkbox" checked={draft.autoScan} onChange={(event) => setDraft({ ...draft, autoScan: event.target.checked })} />
+        Auto scan cards and request AI identification
       </label>
       <label className="checkRow">
         <input

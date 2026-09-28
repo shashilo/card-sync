@@ -138,6 +138,11 @@ function OptionsApp(): JSX.Element {
           Allow clearly labeled AI provisional values before comp-backed data arrives
         </label>
 
+        <label className="checkRow">
+          <input type="checkbox" checked={settings.autoScan} onChange={(event) => setSettings({ ...settings, autoScan: event.target.checked })} />
+          Auto scan cards and request AI identification
+        </label>
+
         <button type="button" onClick={persist}>
           <Save size={16} />
           {saved ? "Saved" : "Save settings"}

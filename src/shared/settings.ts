@@ -16,7 +16,8 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   identifyStableAfterMs: 150,
   maxTrackedCards: 1,
   allowAiEstimatedValues: true,
-  maxBidPercent: 80
+  maxBidPercent: 80,
+  autoScan: true
 };
 
 export async function loadSettings(): Promise<ExtensionSettings> {
