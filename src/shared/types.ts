@@ -64,7 +64,7 @@ export interface CompLink {
 }
 
 export interface SoldComp {
-  source: "Card Ladder" | "eBay sold";
+  source: "Card Ladder" | "eBay sold" | "130 Point";
   title: string;
   price: number;
   url: string;
@@ -73,7 +73,7 @@ export interface SoldComp {
 }
 
 export interface CompSearchAttempt {
-  source: "Card Ladder" | "eBay sold";
+  source: "Card Ladder" | "eBay sold" | "130 Point";
   query: string;
   status: string;
   count: number;

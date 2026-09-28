@@ -13,7 +13,7 @@ import { detectCardBoxes } from "./lib/detector";
 import { clearShowHistory, listShowHistory, showKeyFromUrl, upsertScanHistoryItem } from "./lib/history";
 import { identityKey, identitySearchText, inferIdentityFromContext } from "./lib/identity";
 import { lookupPriceGuide, type PriceGuideLookupResult } from "./lib/price-guide";
-import { lookupFreeComps, valuationFromFreeComps } from "./lib/free-comps";
+import { lookup130PointComps, lookupFreeComps, valuationFromFreeComps } from "./lib/free-comps";
 import type { FreeCompLookupResult } from "./lib/free-comps";
 import { lookupCardLadderComps } from "./lib/card-ladder";
 import { withMaxBidPercent, generateCompLinks, buildValuation, rememberValuation, stageFor } from "./lib/pricing";
@@ -739,8 +739,9 @@ function App(): JSX.Element {
     markTrack(trackId, {
       priceLookup: priceLookupState("free-comps-pending", "Fetching Card Ladder sales comps.")
     });
-    const ladderResult = initialLadderResult ?? await lookupCardLadderComps(identity);
-    const result = ladderResult.comps.length ? ladderResult : await lookupFreeComps(identity, compLinks);
+    const pointResult = await lookup130PointComps(identity);
+    const ladderResult = pointResult.comps.length ? pointResult : (initialLadderResult ?? await lookupCardLadderComps(identity));
+    const result = pointResult.comps.length ? pointResult : (ladderResult.comps.length ? ladderResult : await lookupFreeComps(identity, compLinks));
     const compSearchAttempts = [...(ladderResult.searchAttempts ?? []), ...(ladderResult.comps.length ? [] : result.searchAttempts ?? [])];
     if (!ladderResult.comps.length) {
       for (const attempt of result.searchAttempts ?? []) {

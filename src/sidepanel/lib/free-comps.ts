@@ -75,6 +75,60 @@ export async function lookupFreeComps(identity: CardIdentity, compLinks: CompLin
   };
 }
 
+export async function lookup130PointComps(identity: CardIdentity): Promise<FreeCompLookupResult> {
+  const query = identitySearchText(identity);
+  if (identity.confidence < 0.5 || !query) return { status: "needs-identity", message: "Card needs a stronger identity before 130 Point can search sales.", comps: [] };
+  let tabId: number | undefined;
+  try {
+    const tab = await chrome.tabs.create({ url: `https://130point.com/sales/?search=${encodeURIComponent(query)}`, active: false });
+    tabId = tab.id;
+    if (!tabId) throw new Error("Chrome did not return a 130 Point tab ID.");
+    await waitFor130PointTab(tabId);
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      const [execution] = await chrome.scripting.executeScript({ target: { tabId }, func: read130PointSalesPage, args: [query] });
+      const snapshot = execution?.result;
+      if (snapshot?.comps?.length) return { status: "free-comps-ready", message: `Found ${snapshot.comps.length} 130 Point sale${snapshot.comps.length === 1 ? "" : "s"}.`, comps: snapshot.comps, searchAttempts: [{ source: "130 Point", query, status: "results", count: snapshot.comps.length, message: "130 Point sales rows were extracted." }] };
+      if (snapshot?.ready) break;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    return { status: "no-free-comps", message: "130 Point returned no readable sales for this search.", comps: [], searchAttempts: [{ source: "130 Point", query, status: "no-results", count: 0, message: "No readable 130 Point sales rows were found." }] };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "130 Point lookup failed.";
+    return { status: "error", message: `130 Point lookup failed: ${message}`, comps: [], searchAttempts: [{ source: "130 Point", query, status: "error", count: 0, message }] };
+  } finally {
+    if (tabId !== undefined) await chrome.tabs.remove(tabId).catch(() => undefined);
+  }
+}
+
+async function waitFor130PointTab(tabId: number): Promise<void> {
+  const current = await chrome.tabs.get(tabId);
+  if (current.status === "complete") return;
+  await new Promise<void>((resolve) => {
+    const timeout = setTimeout(() => finish(), 15_000);
+    const listener: Parameters<typeof chrome.tabs.onUpdated.addListener>[0] = (updatedTabId, changeInfo) => {
+      if (updatedTabId === tabId && changeInfo.status === "complete") finish();
+    };
+    const finish = () => { clearTimeout(timeout); chrome.tabs.onUpdated.removeListener(listener); resolve(); };
+    chrome.tabs.onUpdated.addListener(listener);
+  });
+}
+
+function read130PointSalesPage(query: string): { ready: boolean; comps: SoldComp[] } {
+  const body = document.body?.innerText ?? "";
+  const links = Array.from(document.querySelectorAll<HTMLAnchorElement>("a[href]"));
+  const rows = links.filter((link) => /ebay|item|sale/i.test(link.href)).flatMap((link): SoldComp[] => {
+    const text = link.parentElement?.innerText || link.innerText || "";
+    const priceMatch = text.match(/\$\s?([0-9,]+(?:\.\d{1,2})?)/);
+    if (!priceMatch) return [];
+    const price = Number(priceMatch[1].replace(/,/g, ""));
+    if (!Number.isFinite(price) || price <= 0) return [];
+    const date = text.match(/(?:sold|ended|date)\s*[:\-]?\s*([A-Z][a-z]{2,8}\s+\d{1,2},?\s+\d{4})/i)?.[1];
+    return [{ source: "130 Point", title: text.replace(/\s+/g, " ").trim().slice(0, 240), price, url: link.href, soldDate: date }];
+  });
+  return { ready: /no results|no sales|results/i.test(body) || rows.length > 0, comps: rows.slice(0, 5) };
+}
+
 async function fetchEbayComps(baseUrl: string, searchQuery: string): Promise<{ comps: SoldComp[]; unreadable: boolean }> {
   const url = new URL(baseUrl);
   url.searchParams.set("_nkw", searchQuery);
