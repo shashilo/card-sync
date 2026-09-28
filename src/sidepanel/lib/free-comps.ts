@@ -87,6 +87,7 @@ export function valuationFromFreeComps(identity: CardIdentity, comps: SoldComp[]
   }
 
   const median = prices[Math.floor(prices.length / 2)];
+  const source = comps[0]?.source ?? "eBay sold";
   return {
     low: Math.round(median * 0.85),
     high: Math.round(median * 1.15),
@@ -95,8 +96,10 @@ export function valuationFromFreeComps(identity: CardIdentity, comps: SoldComp[]
     confidence: Math.min(0.68, Math.max(0.5, identity.confidence)),
     source: "free-comps",
     compCount: prices.length,
-    reasons: [`Best-effort eBay sold extraction from ${prices.length} visible result${prices.length === 1 ? "" : "s"}.`],
-    warnings: ["Free page extraction can miss, duplicate, or misread results; verify before bidding."]
+    reasons: [`${source} history sample of ${prices.length} visible sale${prices.length === 1 ? "" : "s"}.`],
+    warnings: [source === "Card Ladder"
+      ? "Card Ladder search results can include nearby variants or grades; confirm each match before bidding."
+      : "Free page extraction can miss, duplicate, or misread results; verify before bidding."]
   };
 }
 

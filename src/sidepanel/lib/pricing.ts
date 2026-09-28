@@ -17,6 +17,11 @@ export function generateCompLinks(identity: CardIdentity): CompLink[] {
   const encoded = encodeURIComponent(query);
   return [
     {
+      source: "Card Ladder",
+      label: "Card Ladder sales search",
+      url: `https://app.cardladder.com/sales-history?direction=desc&sort=date&q=${encoded}`
+    },
+    {
       source: "eBay sold",
       label: "eBay sold search",
       url: `https://www.ebay.com/sch/i.html?_nkw=${encoded}&_sacat=0&LH_Sold=1&LH_Complete=1`

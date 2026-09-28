@@ -17,7 +17,8 @@ Then load `dist/` as an unpacked extension in Chrome.
 - The side panel starts `tabCapture` after the user clicks `Start scanning`.
 - Local canvas vision tracks card-shaped rectangles continuously.
 - Stable card crops are sent to the configured AI provider, not every frame.
-- Stable identities can be sent to a CardSync comp proxy for SportsCardsPro / PriceCharting price-guide values.
+- In free-comp mode, stable identities are searched in Card Ladder using the signed-in Chrome session; eBay sold listings are the fallback.
+- Stable identities can also be sent to a CardSync comp proxy for SportsCardsPro / PriceCharting price-guide values.
 - The overlay shows staged states: detecting, candidate, fast value, or price-backed.
 - The sidebar shows identity evidence, warnings, and comp-search links.
 
@@ -34,7 +35,7 @@ API keys are stored locally in `chrome.storage.local` for this POC. CardSync doe
 
 ## Limits
 
-This is decision support, not an appraisal tool. AI-estimated values are labeled provisional. Price-backed values require the CardSync comp proxy and a SportsCardsPro token.
+This is decision support, not an appraisal tool. AI-estimated values are labeled provisional. Card Ladder sale extraction requires an active signed-in Pro browser session and is a POC; verify sale matches and prices before relying on them. A configured price-guide proxy takes precedence over free-comp lookup.
 
 ## SportsCardsPro Price Guide Proxy
 

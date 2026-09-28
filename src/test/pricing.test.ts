@@ -36,9 +36,11 @@ describe("pricing pipeline", () => {
 
   it("generates source links from normalized card identity", () => {
     const links = generateCompLinks(jordan);
-    expect(links).toHaveLength(3);
-    expect(links[0].url).toContain("LH_Sold=1");
-    expect(links[1].url).toContain("130point.com");
+    expect(links).toHaveLength(4);
+    expect(links[0].source).toBe("Card Ladder");
+    expect(links[0].url).toContain("app.cardladder.com/sales-history");
+    expect(links[1].url).toContain("LH_Sold=1");
+    expect(links[2].url).toContain("130point.com");
   });
 
   it("uses seeded demo values for known POC cards", () => {

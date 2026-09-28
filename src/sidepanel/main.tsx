@@ -14,6 +14,7 @@ import { clearShowHistory, listShowHistory, showKeyFromUrl, upsertScanHistoryIte
 import { identityKey, inferIdentityFromContext } from "./lib/identity";
 import { lookupPriceGuide, type PriceGuideLookupResult } from "./lib/price-guide";
 import { lookupFreeComps, valuationFromFreeComps } from "./lib/free-comps";
+import { lookupCardLadderComps } from "./lib/card-ladder";
 import { generateCompLinks, buildValuation, rememberValuation, stageFor } from "./lib/pricing";
 import { rememberCardFingerprint, shouldPersistScanHistory, shouldStartScanForFingerprint, type ActiveScanFingerprint } from "./lib/scan-gate";
 import { formatPrice, labelForTrack, priceLookupLabel, updateTrackedCards, type TrackedCard } from "./lib/tracker";
@@ -473,7 +474,7 @@ function App(): JSX.Element {
     activeScansRef.current.set(track.id, { signature, fingerprint: crop.fingerprint, requestId });
     const pendingPriceLookup = settingsRef.current.priceGuideProxyUrl.trim()
       ? priceLookupState("pending", "Checking SportsCardsPro.")
-      : priceLookupState("free-comps-pending", "Fetching eBay sold comps.");
+      : priceLookupState("free-comps-pending", "Fetching Card Ladder sales comps.");
     markTrack(track.id, { inFlight: true, identifyRequestedAt: now, stage: "candidate", priceLookup: pendingPriceLookup });
     logDiagnostic("Card crop ready", {
       trackId: track.id,
@@ -691,15 +692,21 @@ function App(): JSX.Element {
   async function applyFreeComps(trackId: string, track: TrackedCard, crop: string, identity: CardIdentity, signature?: string, requestId?: string): Promise<void> {
     const compLinks = generateCompLinks(identity);
     markTrack(trackId, {
-      priceLookup: priceLookupState("free-comps-pending", "Fetching eBay sold comps.")
+      priceLookup: priceLookupState("free-comps-pending", "Fetching Card Ladder sales comps.")
     });
-    const result = await lookupFreeComps(identity, compLinks);
-    logDiagnostic("Free comps lookup completed", { status: result.status, count: result.comps.length, identityConfidence: Math.round(identity.confidence * 100), message: result.message });
+    const ladderResult = await lookupCardLadderComps(identity);
+    const result = ladderResult.comps.length ? ladderResult : await lookupFreeComps(identity, compLinks);
+    const resultMessage = ladderResult.comps.length
+      ? ladderResult.message
+      : result.comps.length
+        ? `${ladderResult.message} Using the eBay fallback. ${result.message}`
+        : `${ladderResult.message} ${result.message}`;
+    logDiagnostic("Free comps lookup completed", { provider: result.comps[0]?.source ?? "none", status: result.status, count: result.comps.length, identityConfidence: Math.round(identity.confidence * 100), message: resultMessage });
     if (signature && !isCurrentScan(trackId, signature, requestId)) return;
 
     const valuation = result.comps.length ? valuationFromFreeComps(identity, result.comps) : tracksRef.current.find((candidate) => candidate.id === trackId)?.valuation;
     const stage = valuation ? stageFor(identity, valuation) : tracksRef.current.find((candidate) => candidate.id === trackId)?.stage ?? "candidate";
-    const priceLookup = priceLookupState(result.status, result.message);
+    const priceLookup = priceLookupState(result.status, resultMessage);
     markTrack(trackId, {
       identity,
       valuation,
@@ -1103,7 +1110,7 @@ function DetailPanel({ track }: { track: TrackedCard }): JSX.Element {
             {track.priceLookup ? priceLookupLabel(track.priceLookup) : track.inFlight ? "Working comp lookup" : "No fast value yet"}
           </span>
           <strong>{track.priceLookup?.message || (track.inFlight ? "Checking identity and pricing" : "Comp search ready after identity")}</strong>
-          <small>{track.compLinks.length ? "eBay, 130 Point, and PSA APR are manual research links." : "Do not chase without confidence."}</small>
+          <small>{track.compLinks.length ? "Card Ladder, eBay, 130 Point, and PSA APR are research links." : "Do not chase without confidence."}</small>
         </div>
       )}
 
@@ -1164,7 +1171,7 @@ function HistoryPanel({ items, onClear }: { items: ScanHistoryItem[]; onClear: (
                   {formatHistoryTime(item.lastSeenAt)} · {Math.round((item.identity?.confidence ?? item.detectionConfidence) * 100)}%
                 </small>
                 {item.priceLookup ? <small className={`priceStatus ${item.priceLookup.status}`}>{priceLookupLabel(item.priceLookup)}</small> : null}
-                {item.freeComps?.length ? <p>{item.freeComps.length} eBay sold comp{item.freeComps.length === 1 ? "" : "s"} captured</p> : null}
+                {item.freeComps?.length ? <p>{item.freeComps.length} {item.freeComps[0]?.source ?? "free"} comp{item.freeComps.length === 1 ? "" : "s"} captured</p> : null}
                 {item.compLinks.length ? (
                   <div className="miniLinks">
                     {item.compLinks.slice(0, 3).map((link) => (
@@ -1244,12 +1251,12 @@ function formatHistoryTime(timestamp: number): string {
 function FreeCompsPanel({ comps }: { comps: NonNullable<TrackedCard["freeComps"]> }): JSX.Element {
   return (
     <div className="freeComps">
-      <h3>Free Comps</h3>
+      <h3>Recent Sales</h3>
       {comps.slice(0, 5).map((comp) => (
         <a href={comp.url} key={`${comp.title}-${comp.price}-${comp.url}`} rel="noreferrer" target="_blank">
           <strong>{formatPrice(comp.price)}</strong>
           <span>{comp.title}</span>
-          {comp.soldDate ? <small>{comp.soldDate}</small> : null}
+          {comp.soldDate || comp.verified ? <small>{[comp.soldDate, comp.verified ? "Card Ladder verified" : undefined].filter(Boolean).join(" · ")}</small> : null}
         </a>
       ))}
     </div>

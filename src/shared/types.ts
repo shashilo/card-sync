@@ -55,20 +55,21 @@ export interface CardIdentity {
 }
 
 export interface CompLink {
-  source: "eBay sold" | "130 Point" | "PSA APR" | "Search";
+  source: "Card Ladder" | "eBay sold" | "130 Point" | "PSA APR" | "Search";
   label: string;
   url: string;
 }
 
 export interface SoldComp {
-  source: "eBay sold";
+  source: "Card Ladder" | "eBay sold";
   title: string;
   price: number;
   url: string;
   soldDate?: string;
+  verified?: boolean;
 }
 
-export type CompProvider = "sportscardspro" | "manual-links" | "demo";
+export type CompProvider = "card-ladder" | "sportscardspro" | "manual-links" | "demo";
 
 export interface PriceGuideQuote {
   provider: CompProvider;

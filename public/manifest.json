@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "CardSync Sudden-Death POC",
   "description": "Live sports-card detection, provisional value ranges, and comp links for Whatnot sudden-death auctions.",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "action": {
     "default_title": "Open CardSync"
   },
@@ -13,6 +13,7 @@
   "host_permissions": [
     "https://*.whatnot.com/*",
     "https://www.ebay.com/*",
+    "https://app.cardladder.com/*",
     "https://api.openai.com/*",
     "https://openrouter.ai/*",
     "https://api.anthropic.com/*"
