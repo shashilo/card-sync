@@ -527,6 +527,10 @@ function App(): JSX.Element {
     nextAiIdentificationAtRef.current = Date.now() + 8_000;
     identifyCard(crop.dataUrl, contextRef.current, settingsRef.current)
       .then(({ identity, estimate, error: identificationError }) => {
+        const currentActiveScan = activeScansRef.current.get(track.id);
+        if (currentActiveScan?.requestId === requestId) {
+          activeScansRef.current.set(track.id, { ...currentActiveScan, completed: true });
+        }
         logDiagnostic(identificationError ? "Card identification failed" : "Card identification response received", {
           provider: provider.provider,
           confidence: Math.round(identity.confidence * 100),
@@ -1231,10 +1235,14 @@ function FreeCompsPanel({ comps }: { comps: NonNullable<TrackedCard["freeComps"]
 function IdentityFacts({ identity }: { identity: CardIdentity }): JSX.Element {
   const facts = [
     ["Player", identity.player],
+    ["Card type", identity.cardType],
+    ["Brand", identity.brand],
     ["Year", identity.year],
     ["Set", identity.set],
     ["Number", identity.cardNumber],
     ["Parallel", identity.parallel],
+    ["Numbered", identity.numbered === undefined ? "Unclear" : identity.numbered ? identity.serialNumber || "Yes" : "No"],
+    ["Autograph", identity.autograph === undefined ? "Unclear" : identity.autograph ? "Yes" : "No"],
     ["Grade", [identity.gradeCompany, identity.grade].filter(Boolean).join(" ")]
   ].filter(([, value]) => value);
 

@@ -172,8 +172,9 @@ function buildPrompt(mode: IdentifyMode): string {
           "Do not identify from card art when the slab label text is missing."
         ]
       : [
-          "Identify the specific card shown, not only the athlete. Extract the card's year, manufacturer/set, card number, parallel/variation, grade, and serial number when visible, along with the player name.",
-          "Inspect the design, logos, borders, team, jersey, card number, and any printed text to distinguish the product and variant. Put the best identifiable set or product name in identity.set.",
+          "Identify the specific card shown, not only the athlete. Return the player, card type (for example base, rookie, insert, patch/relic), manufacturer brand (for example Topps, Panini, Upper Deck), product/set, year, card number, parallel/variation, grade, and serial number when visible.",
+          "Inspect the design, logos, borders, team, jersey, card number, and all printed text to distinguish the product and variant. Put the manufacturer in identity.brand and the product/set in identity.set.",
+          "Set identity.numbered to true only when the card is serial-numbered or explicitly states a print run; capture the stamp exactly in identity.serialNumber (for example 12/99). Use null when numbering cannot be confirmed from the image. Set identity.autograph to true only when an actual signature or explicit autograph designation is visible, false only when clearly absent, otherwise null.",
           "Read the printed player name on the card face, especially the name banner at the bottom, and transcribe it into identity.player.",
           "If a graded slab is visible, use both the slab label and the card face. The slab label can provide year, set, card number, and grade; the card face can provide the player and variant details.",
           "Use page or auction text only as weak supporting evidence; never substitute it for visible card text.",
@@ -190,7 +191,7 @@ function buildPrompt(mode: IdentifyMode): string {
     "",
     "JSON shape:",
     "{",
-    '  "identity": { "sport": "", "player": "", "year": "", "set": "", "cardNumber": "", "parallel": "", "gradeCompany": "", "grade": "", "serialNumber": "", "autograph": false, "relic": false, "rawText": "", "confidence": 0.0, "evidence": [], "alternatives": [] },',
+    '  "identity": { "sport": "", "player": "", "brand": "", "cardType": "", "year": "", "set": "", "cardNumber": "", "parallel": "", "gradeCompany": "", "grade": "", "serialNumber": "", "numbered": null, "autograph": null, "relic": false, "rawText": "", "confidence": 0.0, "evidence": [], "alternatives": [] },',
     '  "estimate": { "low": 0, "high": 0, "maxBid": 0, "confidence": 0.0, "reasons": [], "warnings": [] }',
     "}"
   ].join("\n");

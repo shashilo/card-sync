@@ -107,11 +107,14 @@ function expandBox(
   box: { x: number; y: number; width: number; height: number },
   bounds: { x: number; y: number; width: number; height: number }
 ): Box {
-  const pad = Math.min(box.width, box.height) * 0.08;
-  const x = clamp(box.x - pad, bounds.x, bounds.x + bounds.width);
-  const y = clamp(box.y - pad, bounds.y, bounds.y + bounds.height);
-  const right = clamp(box.x + box.width + pad, bounds.x, bounds.x + bounds.width);
-  const bottom = clamp(box.y + box.height + pad, bounds.y, bounds.y + bounds.height);
+  // The scan window often hugs the inner card artwork; expand each axis by its
+  // own proportion so portrait cards get enough vertical margin for full edges.
+  const padX = box.width * 0.14;
+  const padY = box.height * 0.14;
+  const x = clamp(box.x - padX, bounds.x, bounds.x + bounds.width);
+  const y = clamp(box.y - padY, bounds.y, bounds.y + bounds.height);
+  const right = clamp(box.x + box.width + padX, bounds.x, bounds.x + bounds.width);
+  const bottom = clamp(box.y + box.height + padY, bounds.y, bounds.y + bounds.height);
   return {
     x,
     y,

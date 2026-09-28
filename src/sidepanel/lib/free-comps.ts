@@ -26,48 +26,69 @@ export async function lookupFreeComps(identity: CardIdentity, compLinks: CompLin
     };
   }
 
-  try {
-    const response = await fetch(ebayLink.url, {
-      headers: {
-        accept: "text/html"
-      },
-      credentials: "include",
-      signal: AbortSignal.timeout(4200)
-    });
+  const queries = freeCompSearchQueries(identity);
+  const exactResult = await fetchEbayComps(ebayLink.url, queries[0]);
+  if (exactResult.comps.length) {
+    return {
+      status: "free-comps-ready",
+      message: `Found ${exactResult.comps.length} eBay sold comp${exactResult.comps.length === 1 ? "" : "s"} for the exact card search.`,
+      comps: exactResult.comps
+    };
+  }
 
-    if (!response.ok) {
-      return {
-        status: "error",
-        message: `eBay sold search returned ${response.status}.`,
-        comps: []
-      };
-    }
+  const fallbackResults = await Promise.all(queries.slice(1).map((searchQuery) => fetchEbayComps(ebayLink.url, searchQuery)));
+  const broadenedComps = dedupeComps(fallbackResults.flatMap((result) => result.comps)).slice(0, 5);
+  if (broadenedComps.length) {
+    return {
+      status: "free-comps-ready",
+      message: `No exact sold comps found; found ${broadenedComps.length} sales from broader player and product searches. Confirm the set, parallel, and serial number before bidding.`,
+      comps: broadenedComps
+    };
+  }
+
+  const unreadableResponse = exactResult.unreadable || fallbackResults.some((result) => result.unreadable);
+
+  return {
+    status: unreadableResponse ? "error" : "no-free-comps",
+    message: unreadableResponse
+      ? "eBay did not return readable sold results for the exact or broadened searches. Open the eBay link to verify results."
+      : "No sold listings matched the exact card or broader player and product searches.",
+    comps: []
+  };
+}
+
+async function fetchEbayComps(baseUrl: string, searchQuery: string): Promise<{ comps: SoldComp[]; unreadable: boolean }> {
+  const url = new URL(baseUrl);
+  url.searchParams.set("_nkw", searchQuery);
+  try {
+    const response = await fetch(url.toString(), {
+      headers: { accept: "text/html" },
+      credentials: "include",
+      signal: AbortSignal.timeout(2800)
+    });
+    if (!response.ok) return { comps: [], unreadable: true };
 
     const html = await response.text();
     const comps = parseEbaySoldComps(html).slice(0, 5);
-    if (!comps.length) {
-      const explicitlyEmpty = /(?:no exact matches|no results found|0 results|there are no results)/i.test(html);
-      return {
-        status: explicitlyEmpty ? "no-free-comps" : "error",
-        message: explicitlyEmpty
-          ? "eBay returned no sold listings for this search. Open the eBay link to try a broader query."
-          : "eBay returned a page CardSync could not read. Open the sold-search link to check sign-in or verify the results.",
-        comps: []
-      };
-    }
-
+    if (comps.length) return { comps, unreadable: false };
     return {
-      status: "free-comps-ready",
-      message: `Found ${comps.length} eBay sold comp${comps.length === 1 ? "" : "s"}.`,
-      comps
+      comps: [],
+      unreadable: !/(?:no exact matches|no results found|0 results|there are no results)/i.test(html)
     };
   } catch {
-    return {
-      status: "error",
-      message: "Could not fetch eBay sold results from the browser.",
-      comps: []
-    };
+    return { comps: [], unreadable: true };
   }
+}
+
+function freeCompSearchQueries(identity: CardIdentity): string[] {
+  const queries = [
+    identitySearchText(identity),
+    [identity.year, identity.player, identity.brand, identity.set, identity.cardNumber ? `#${identity.cardNumber.replace(/^#/, "")}` : "", identity.gradeCompany, identity.grade].filter(Boolean).join(" "),
+    [identity.year, identity.player, identity.brand, identity.set].filter(Boolean).join(" "),
+    [identity.year, identity.player, identity.brand].filter(Boolean).join(" "),
+    [identity.year, identity.player].filter(Boolean).join(" ")
+  ];
+  return [...new Set(queries.map((value) => value.replace(/\s+/g, " ").trim()).filter(Boolean))];
 }
 
 export function valuationFromFreeComps(identity: CardIdentity, comps: SoldComp[]): Valuation {

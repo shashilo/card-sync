@@ -7,14 +7,14 @@ function clean(value: string): string {
 
 export function identityKey(identity: CardIdentity): string {
   return clean(
-    [identity.player, identity.year, identity.set, identity.cardNumber, identity.parallel, identity.gradeCompany, identity.grade]
+    [identity.player, identity.brand, identity.year, identity.set, identity.cardNumber, identity.cardType, identity.parallel, identity.gradeCompany, identity.grade, identity.serialNumber]
       .filter(Boolean)
       .join(" ")
   );
 }
 
 export function identitySearchText(identity: Partial<CardIdentity>): string {
-  return [identity.year, identity.player, identity.set, identity.cardNumber ? `#${identity.cardNumber}` : "", identity.parallel, identity.gradeCompany, identity.grade]
+  return [identity.year, identity.player, identity.brand, identity.set, identity.cardNumber ? `#${identity.cardNumber}` : "", identity.cardType, identity.parallel, identity.numbered ? identity.serialNumber : "", identity.gradeCompany, identity.grade]
     .filter(Boolean)
     .join(" ")
     .replace(/\s+/g, " ")
@@ -68,6 +68,8 @@ export function coerceIdentity(raw: unknown, fallback: CardIdentity): CardIdenti
   return {
     sport: asString(value.sport) ?? fallback.sport,
     player: asString(value.player) ?? fallback.player,
+    brand: asString(value.brand) ?? fallback.brand,
+    cardType: asString(value.cardType) ?? fallback.cardType,
     year: asString(value.year) ?? fallback.year,
     set: asString(value.set) ?? fallback.set,
     cardNumber: asString(value.cardNumber) ?? asString(value.card_number) ?? fallback.cardNumber,
@@ -75,6 +77,7 @@ export function coerceIdentity(raw: unknown, fallback: CardIdentity): CardIdenti
     gradeCompany: asString(value.gradeCompany) ?? asString(value.grade_company) ?? fallback.gradeCompany,
     grade: asString(value.grade) ?? fallback.grade,
     serialNumber: asString(value.serialNumber) ?? asString(value.serial_number),
+    numbered: asBoolean(value.numbered) ?? (Boolean(asString(value.serialNumber) ?? asString(value.serial_number)) || fallback.numbered),
     autograph: asBoolean(value.autograph),
     relic: asBoolean(value.relic),
     rawText: asString(value.rawText) ?? asString(value.raw_text) ?? fallback.rawText,

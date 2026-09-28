@@ -39,6 +39,8 @@ export interface PageContext {
 export interface CardIdentity {
   sport?: string;
   player?: string;
+  brand?: string;
+  cardType?: string;
   year?: string;
   set?: string;
   cardNumber?: string;
@@ -46,6 +48,7 @@ export interface CardIdentity {
   gradeCompany?: string;
   grade?: string;
   serialNumber?: string;
+  numbered?: boolean;
   autograph?: boolean;
   relic?: boolean;
   rawText: string;

@@ -4,6 +4,7 @@ export interface ActiveScanFingerprint {
   fingerprint: string;
   pendingFingerprint?: string;
   pendingCount?: number;
+  completed?: boolean;
 }
 
 export interface ScanFingerprintDecision {
@@ -30,6 +31,9 @@ export function shouldStartScanForFingerprint(
   fingerprint: string,
   now: number
 ): ScanFingerprintDecision {
+  if (activeScan?.completed && hammingDistance(activeScan.fingerprint, fingerprint) <= 20) {
+    return { shouldScan: false, activeScan: { ...activeScan, pendingFingerprint: undefined, pendingCount: 0 } };
+  }
   if (activeScan && sameCardFingerprint(activeScan.fingerprint, fingerprint)) {
     return { shouldScan: false, activeScan: { ...activeScan, pendingFingerprint: undefined, pendingCount: 0 } };
   }
