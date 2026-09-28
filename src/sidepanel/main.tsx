@@ -11,7 +11,7 @@ import type { BadgeTone, CardIdentity, ExtensionSettings, PageContext, PriceLook
 import { identifyCard } from "./lib/ai";
 import { detectCardBoxes } from "./lib/detector";
 import { clearShowHistory, listShowHistory, showKeyFromUrl, upsertScanHistoryItem } from "./lib/history";
-import { identityKey, inferIdentityFromContext } from "./lib/identity";
+import { identityKey, identitySearchText, inferIdentityFromContext } from "./lib/identity";
 import { lookupPriceGuide, type PriceGuideLookupResult } from "./lib/price-guide";
 import { lookupFreeComps, valuationFromFreeComps } from "./lib/free-comps";
 import type { FreeCompLookupResult } from "./lib/free-comps";
@@ -533,12 +533,24 @@ function App(): JSX.Element {
         }
         logDiagnostic(identificationError ? "Card identification failed" : "Card identification response received", {
           provider: provider.provider,
+          model: provider.model,
+          trackId: track.id,
+          cardIdentity: JSON.stringify({ player: identity.player, brand: identity.brand, cardType: identity.cardType, year: identity.year, set: identity.set, cardNumber: identity.cardNumber, parallel: identity.parallel, serialNumber: identity.serialNumber, numbered: identity.numbered, autograph: identity.autograph }),
           confidence: Math.round(identity.confidence * 100),
           hasPlayer: Boolean(identity.player),
           hasYear: Boolean(identity.year),
           hasSet: Boolean(identity.set),
           hasEstimate: Boolean(estimate),
           error: identificationError ?? ""
+        });
+        logDiagnostic("AI value estimate received", {
+          trackId: track.id,
+          low: estimate?.low ?? null,
+          high: estimate?.high ?? null,
+          maxBid: estimate?.maxBid ?? null,
+          confidence: estimate?.confidence ?? null,
+          reasons: JSON.stringify(estimate?.reasons ?? []),
+          warnings: JSON.stringify(estimate?.warnings ?? [])
         });
         if (!isCurrentScan(track.id, signature, requestId)) return;
         if (identificationError) {
@@ -558,6 +570,20 @@ function App(): JSX.Element {
           estimate,
           settingsRef.current.allowAiEstimatedValues
         );
+        logDiagnostic("Valuation decision", {
+          trackId: track.id,
+          source: valuation.source,
+          allowAiEstimate: settingsRef.current.allowAiEstimatedValues,
+          identityConfidence: Math.round(identity.confidence * 100),
+          estimateConfidence: estimate?.confidence ?? null,
+          low: valuation.low,
+          high: valuation.high,
+          maxBid: valuation.maxBid,
+          confidence: Math.round(valuation.confidence * 100),
+          compCount: valuation.compCount,
+          reasons: JSON.stringify(valuation.reasons),
+          warnings: JSON.stringify(valuation.warnings)
+        });
         const compLinks = generateCompLinks(identity);
         rememberValuation(identity, valuation, sessionCacheRef.current);
         const stage = stageFor(identity, valuation);
@@ -600,11 +626,28 @@ function App(): JSX.Element {
   }
 
   async function applyPriceGuide(trackId: string, track: TrackedCard, crop: string, identity: CardIdentity, signature?: string, requestId?: string): Promise<void> {
+    logDiagnostic("Card Ladder search started", { trackId, query: identitySearchText(identity), identityConfidence: Math.round(identity.confidence * 100) });
     const ladderResult = await lookupCardLadderComps(identity);
+    for (const attempt of ladderResult.searchAttempts ?? []) {
+      logDiagnostic("Card Ladder search attempt", { trackId, query: attempt.query, status: attempt.status, count: attempt.count, message: attempt.message });
+    }
+    for (const comp of ladderResult.comps) {
+      logDiagnostic("Card Ladder sale extracted", { trackId, title: comp.title, price: comp.price, soldDate: comp.soldDate ?? "", verified: Boolean(comp.verified), url: comp.url });
+    }
+    logDiagnostic("Card Ladder search completed", { trackId, status: ladderResult.status, count: ladderResult.comps.length, message: ladderResult.message });
     if (ladderResult.comps.length || !settingsRef.current.priceGuideProxyUrl.trim()) {
+      logDiagnostic("Pricing source route selected", {
+        trackId,
+        nextSource: ladderResult.comps.length ? "Card Ladder comps" : "eBay sold fallback",
+        cardLadderCompCount: ladderResult.comps.length,
+        sportsCardsProProxyConfigured: Boolean(settingsRef.current.priceGuideProxyUrl.trim()),
+        reason: ladderResult.comps.length ? "Card Ladder returned sale rows." : "No Card Ladder sales were extracted and no SportsCardsPro proxy is configured."
+      });
       await applyFreeComps(trackId, track, crop, identity, signature, requestId, ladderResult);
       return;
     }
+
+    logDiagnostic("Pricing source route selected", { trackId, nextSource: "SportsCardsPro proxy", reason: "No Card Ladder comps were returned and a price-guide proxy is configured." });
 
     if (settingsRef.current.priceGuideProxyUrl.trim()) {
       markTrack(trackId, {
@@ -612,6 +655,17 @@ function App(): JSX.Element {
       });
     }
     const result = await lookupPriceGuide(identity, settingsRef.current.priceGuideProxyUrl);
+    logDiagnostic("SportsCardsPro lookup completed", {
+      trackId,
+      status: result.status,
+      message: result.message,
+      matchedProduct: result.quote?.productName ?? "",
+      matchedSet: result.quote?.setName ?? "",
+      selectedCondition: result.quote?.selectedCondition ?? "",
+      selectedPrice: result.quote?.selectedPrice ?? null,
+      matchConfidence: result.quote?.confidence ?? null,
+      warnings: JSON.stringify(result.quote?.warnings ?? [])
+    });
     if (signature && !isCurrentScan(trackId, signature, requestId)) return;
     if (result.status !== "ready" || !result.quote) {
       const nextStatus = result.status === "ready" ? "no-match" : result.status;
@@ -632,6 +686,19 @@ function App(): JSX.Element {
     }
 
     const valuation = buildValuation(identity, sessionCacheRef.current, undefined, settingsRef.current.allowAiEstimatedValues, result.quote);
+    logDiagnostic("SportsCardsPro valuation decision", {
+      trackId,
+      source: valuation.source,
+      selectedPrice: result.quote.selectedPrice,
+      selectedCondition: result.quote.selectedCondition,
+      matchConfidence: result.quote.confidence,
+      low: valuation.low,
+      high: valuation.high,
+      maxBid: valuation.maxBid,
+      confidence: Math.round(valuation.confidence * 100),
+      reasons: JSON.stringify(valuation.reasons),
+      warnings: JSON.stringify(valuation.warnings)
+    });
     const compLinks = generateCompLinks(identity);
     rememberValuation(identity, valuation, sessionCacheRef.current);
     const stage = stageFor(identity, valuation);
@@ -665,6 +732,14 @@ function App(): JSX.Element {
     });
     const ladderResult = initialLadderResult ?? await lookupCardLadderComps(identity);
     const result = ladderResult.comps.length ? ladderResult : await lookupFreeComps(identity, compLinks);
+    if (!ladderResult.comps.length) {
+      for (const attempt of result.searchAttempts ?? []) {
+        logDiagnostic("eBay sold search attempt", { trackId, query: attempt.query, status: attempt.status, count: attempt.count, message: attempt.message });
+      }
+    }
+    for (const comp of result.comps) {
+      logDiagnostic("Sold comp considered", { trackId, source: comp.source, title: comp.title, price: comp.price, soldDate: comp.soldDate ?? "", verified: Boolean(comp.verified), url: comp.url });
+    }
     const resultMessage = ladderResult.comps.length
       ? ladderResult.message
       : result.comps.length
@@ -674,6 +749,24 @@ function App(): JSX.Element {
     if (signature && !isCurrentScan(trackId, signature, requestId)) return;
 
     const valuation = result.comps.length ? valuationFromFreeComps(identity, result.comps) : tracksRef.current.find((candidate) => candidate.id === trackId)?.valuation;
+    if (result.comps.length && valuation) {
+      const sortedPrices = result.comps.map((comp) => comp.price).filter((price) => price > 0).sort((a, b) => a - b);
+      const medianPrice = sortedPrices[Math.floor(sortedPrices.length / 2)];
+      logDiagnostic("Comp valuation decision", {
+        trackId,
+        source: valuation.source,
+        includedPrices: JSON.stringify(sortedPrices),
+        count: sortedPrices.length,
+        medianPrice,
+        maxBidRule: "85% of median sold price",
+        low: valuation.low,
+        high: valuation.high,
+        maxBid: valuation.maxBid,
+        confidence: Math.round(valuation.confidence * 100),
+        reasons: JSON.stringify(valuation.reasons),
+        warnings: JSON.stringify(valuation.warnings)
+      });
+    }
     const stage = valuation ? stageFor(identity, valuation) : tracksRef.current.find((candidate) => candidate.id === trackId)?.stage ?? "candidate";
     const priceLookup = priceLookupState(result.status, resultMessage);
     markTrack(trackId, {

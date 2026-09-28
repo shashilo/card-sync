@@ -72,6 +72,14 @@ export interface SoldComp {
   verified?: boolean;
 }
 
+export interface CompSearchAttempt {
+  source: "Card Ladder" | "eBay sold";
+  query: string;
+  status: string;
+  count: number;
+  message: string;
+}
+
 export type CompProvider = "card-ladder" | "sportscardspro" | "manual-links" | "demo";
 
 export interface PriceGuideQuote {

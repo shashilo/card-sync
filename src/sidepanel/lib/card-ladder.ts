@@ -1,4 +1,4 @@
-import type { CardIdentity, SoldComp } from "../../shared/types";
+import type { CardIdentity, CompSearchAttempt, SoldComp } from "../../shared/types";
 import type { FreeCompLookupResult } from "./free-comps";
 import { identitySearchText } from "./identity";
 
@@ -18,51 +18,69 @@ export async function lookupCardLadderComps(identity: CardIdentity): Promise<Fre
     return { status: "needs-identity", message: "Card needs a stronger identity before Card Ladder can search sales.", comps: [] };
   }
 
-  let tabId: number | undefined;
-  try {
-    const tab = await chrome.tabs.create({ url: `${CARD_LADDER_SALES_URL}${encodeURIComponent(query)}`, active: false });
-    tabId = tab.id;
-    if (!tabId) throw new Error("Chrome did not return the temporary Card Ladder tab ID.");
+  const queries = [...new Set([
+    query,
+    [identity.year, identity.player, identity.brand, identity.set, identity.cardNumber ? `#${identity.cardNumber.replace(/^#/, "")}` : "", identity.gradeCompany, identity.grade].filter(Boolean).join(" "),
+    [identity.year, identity.player, identity.brand, identity.set].filter(Boolean).join(" "),
+    [identity.year, identity.player, identity.brand].filter(Boolean).join(" ")
+  ].map((value) => value.replace(/\s+/g, " ").trim()).filter(Boolean))];
+  const searchAttempts: CompSearchAttempt[] = [];
 
-    await waitForTabLoad(tabId);
-    const deadline = Date.now() + RESULT_WAIT_MS;
+  for (const searchQuery of queries) {
+    let tabId: number | undefined;
     let lastSnapshot: CardLadderPageSnapshot | undefined;
+    try {
+      const tab = await chrome.tabs.create({ url: `${CARD_LADDER_SALES_URL}${encodeURIComponent(searchQuery)}`, active: false });
+      tabId = tab.id;
+      if (!tabId) throw new Error("Chrome did not return the temporary Card Ladder tab ID.");
 
-    while (Date.now() < deadline) {
-      const [execution] = await chrome.scripting.executeScript({ target: { tabId }, func: readCardLadderSalesPage });
-      lastSnapshot = execution?.result;
-      if (lastSnapshot?.comps.length) {
-        return {
-          status: "free-comps-ready",
-          message: `Found ${lastSnapshot.comps.length} Card Ladder sale${lastSnapshot.comps.length === 1 ? "" : "s"}${lastSnapshot.comps.some((comp) => comp.verified) ? ", including research-team verified sales" : ""}.`,
-          comps: lastSnapshot.comps
-        };
+      await waitForTabLoad(tabId);
+      const deadline = Date.now() + RESULT_WAIT_MS;
+      while (Date.now() < deadline) {
+        const [execution] = await chrome.scripting.executeScript({ target: { tabId }, func: readCardLadderSalesPage });
+        lastSnapshot = execution?.result;
+        if (lastSnapshot?.comps.length) {
+          searchAttempts.push({ source: "Card Ladder", query: searchQuery, status: "results", count: lastSnapshot.comps.length, message: "Sales rows were extracted." });
+          return {
+            status: "free-comps-ready",
+            message: `Found ${lastSnapshot.comps.length} Card Ladder sale${lastSnapshot.comps.length === 1 ? "" : "s"}${lastSnapshot.comps.some((comp) => comp.verified) ? ", including research-team verified sales" : ""}${searchQuery !== query ? ` with broader query “${searchQuery}”` : ""}.`,
+            comps: lastSnapshot.comps,
+            searchAttempts
+          };
+        }
+        if (lastSnapshot && !lastSnapshot.loggedIn) {
+          searchAttempts.push({ source: "Card Ladder", query: searchQuery, status: "login-required", count: 0, message: "The page showed a sign-in state." });
+          return { status: "error", message: "Card Ladder opened a sign-in page. Sign in to your Pro account in Chrome and try again.", comps: [], searchAttempts };
+        }
+        if (lastSnapshot?.resultsReady && lastSnapshot.resultCount === 0) break;
+        await new Promise((resolve) => setTimeout(resolve, 500));
       }
-      if (lastSnapshot && !lastSnapshot.loggedIn) {
-        return { status: "error", message: "Card Ladder opened a sign-in page. Sign in to your Pro account in Chrome and try again.", comps: [] };
-      }
-      if (lastSnapshot?.resultsReady && lastSnapshot.resultCount === 0) {
-        return { status: "no-free-comps", message: "Card Ladder found no sales for this search. Try a broader card identity.", comps: [] };
-      }
-      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      const noSales = Boolean(lastSnapshot?.resultsReady && lastSnapshot.resultCount === 0);
+      searchAttempts.push({
+        source: "Card Ladder",
+        query: searchQuery,
+        status: noSales ? "no-results" : "timeout",
+        count: lastSnapshot?.resultCount ?? 0,
+        message: noSales ? "Card Ladder returned zero sales; trying a broader query." : "Card Ladder did not render results before the search timeout."
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Card Ladder lookup failed in Chrome.";
+      searchAttempts.push({ source: "Card Ladder", query: searchQuery, status: "error", count: 0, message });
+    } finally {
+      if (tabId !== undefined) await chrome.tabs.remove(tabId).catch(() => undefined);
     }
-
-    return {
-      status: "error",
-      message: lastSnapshot?.loggedIn === false
-        ? "Card Ladder opened a sign-in page. Sign in to your Pro account in Chrome and try again."
-        : "Card Ladder did not render sale results in time. Check that your Pro session is active, then retry.",
-      comps: []
-    };
-  } catch (error) {
-    return {
-      status: "error",
-      message: error instanceof Error ? `Card Ladder lookup failed: ${error.message}` : "Card Ladder lookup failed in Chrome.",
-      comps: []
-    };
-  } finally {
-    if (tabId !== undefined) await chrome.tabs.remove(tabId).catch(() => undefined);
   }
+
+  const hadReadableNoSales = searchAttempts.some((attempt) => attempt.status === "no-results");
+  return {
+    status: hadReadableNoSales ? "no-free-comps" : "error",
+    message: hadReadableNoSales
+      ? "Card Ladder found no sales for the exact search or broader player and product queries."
+      : "Card Ladder did not render sale results for the exact or broader queries. Check that your Pro session is active, then retry.",
+    comps: [],
+    searchAttempts
+  };
 }
 
 async function waitForTabLoad(tabId: number): Promise<void> {

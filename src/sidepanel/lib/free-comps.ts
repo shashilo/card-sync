@@ -1,10 +1,11 @@
-import type { CardIdentity, CompLink, SoldComp, Valuation } from "../../shared/types";
+import type { CardIdentity, CompLink, CompSearchAttempt, SoldComp, Valuation } from "../../shared/types";
 import { identitySearchText } from "./identity";
 
 export interface FreeCompLookupResult {
   status: "free-comps-ready" | "no-free-comps" | "needs-identity" | "error";
   message: string;
   comps: SoldComp[];
+  searchAttempts?: CompSearchAttempt[];
 }
 
 export async function lookupFreeComps(identity: CardIdentity, compLinks: CompLink[]): Promise<FreeCompLookupResult> {
@@ -28,21 +29,37 @@ export async function lookupFreeComps(identity: CardIdentity, compLinks: CompLin
 
   const queries = freeCompSearchQueries(identity);
   const exactResult = await fetchEbayComps(ebayLink.url, queries[0]);
+  const searchAttempts: CompSearchAttempt[] = [{
+    source: "eBay sold",
+    query: queries[0],
+    status: exactResult.comps.length ? "results" : exactResult.unreadable ? "unreadable" : "no-results",
+    count: exactResult.comps.length,
+    message: exactResult.comps.length ? "Exact search returned sales." : exactResult.unreadable ? "Could not read exact-search response." : "No exact sales found."
+  }];
   if (exactResult.comps.length) {
     return {
       status: "free-comps-ready",
       message: `Found ${exactResult.comps.length} eBay sold comp${exactResult.comps.length === 1 ? "" : "s"} for the exact card search.`,
-      comps: exactResult.comps
+      comps: exactResult.comps,
+      searchAttempts
     };
   }
 
   const fallbackResults = await Promise.all(queries.slice(1).map((searchQuery) => fetchEbayComps(ebayLink.url, searchQuery)));
+  searchAttempts.push(...fallbackResults.map((result, index) => ({
+    source: "eBay sold" as const,
+    query: queries[index + 1],
+    status: result.comps.length ? "results" : result.unreadable ? "unreadable" : "no-results",
+    count: result.comps.length,
+    message: result.comps.length ? "Broader search returned sales." : result.unreadable ? "Could not read broadened-search response." : "No sales found."
+  })));
   const broadenedComps = dedupeComps(fallbackResults.flatMap((result) => result.comps)).slice(0, 5);
   if (broadenedComps.length) {
     return {
       status: "free-comps-ready",
       message: `No exact sold comps found; found ${broadenedComps.length} sales from broader player and product searches. Confirm the set, parallel, and serial number before bidding.`,
-      comps: broadenedComps
+      comps: broadenedComps,
+      searchAttempts
     };
   }
 
@@ -53,7 +70,8 @@ export async function lookupFreeComps(identity: CardIdentity, compLinks: CompLin
     message: unreadableResponse
       ? "eBay did not return readable sold results for the exact or broadened searches. Open the eBay link to verify results."
       : "No sold listings matched the exact card or broader player and product searches.",
-    comps: []
+    comps: [],
+    searchAttempts
   };
 }
 
