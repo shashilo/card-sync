@@ -172,8 +172,9 @@ function buildPrompt(mode: IdentifyMode): string {
           "Do not identify from card art when the slab label text is missing."
         ]
       : [
-          "Identify the specific card shown, not only the athlete. Return the player, card type (for example base, rookie, insert, patch/relic), manufacturer brand (for example Topps, Panini, Upper Deck), product/set, year, card number, parallel/variation, grade, and serial number when visible.",
-          "Inspect the design, logos, borders, team, jersey, card number, and all printed text to distinguish the product and variant. Put the manufacturer in identity.brand and the product/set in identity.set.",
+          "Identify the exact card shown, not only the athlete. Return player, manufacturer, product line, year, set, card number, base/rookie/insert/autograph/relic type, exact insert or subset name, exact parallel, image/design variation, grade, and serial stamp when visible.",
+          "Inspect logos, copyright line, design, borders, team, jersey, card number, and all printed text. Keep manufacturer (brand), product line (product), set, insert/subset, parallel, and variation in their separate fields. Do not collapse them into one generic cardType or parallel value.",
+          "Set rookie true only when supported by an RC mark or clear card/product evidence. For autographType, distinguish on-card from sticker only when visible; for relicType, identify the material/item only when stated or visually clear. Leave uncertain details blank and explain uncertainty in evidence.",
           "Set identity.numbered to true only when the card is serial-numbered or explicitly states a print run; capture the stamp exactly in identity.serialNumber (for example 12/99). Use null when numbering cannot be confirmed from the image. Set identity.autograph to true only when an actual signature or explicit autograph designation is visible, false only when clearly absent, otherwise null.",
           "Read the printed player name on the card face, especially the name banner at the bottom, and transcribe it into identity.player.",
           "If a graded slab is visible, use both the slab label and the card face. The slab label can provide year, set, card number, and grade; the card face can provide the player and variant details.",
@@ -191,7 +192,7 @@ function buildPrompt(mode: IdentifyMode): string {
     "",
     "JSON shape:",
     "{",
-    '  "identity": { "sport": "", "player": "", "brand": "", "cardType": "", "year": "", "set": "", "cardNumber": "", "parallel": "", "gradeCompany": "", "grade": "", "serialNumber": "", "numbered": null, "autograph": null, "relic": false, "rawText": "", "confidence": 0.0, "evidence": [], "alternatives": [] },',
+    '  "identity": { "sport": "", "player": "", "brand": "", "product": "", "cardType": "", "rookie": null, "year": "", "set": "", "cardNumber": "", "insert": "", "parallel": "", "variation": "", "gradeCompany": "", "grade": "", "serialNumber": "", "numbered": null, "autograph": null, "autographType": "", "relic": null, "relicType": "", "rawText": "", "confidence": 0.0, "evidence": [], "alternatives": [] },',
     '  "estimate": { "low": 0, "high": 0, "maxBid": 0, "confidence": 0.0, "reasons": [], "warnings": [] }',
     "}"
   ].join("\n");

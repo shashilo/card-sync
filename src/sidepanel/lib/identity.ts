@@ -7,14 +7,14 @@ function clean(value: string): string {
 
 export function identityKey(identity: CardIdentity): string {
   return clean(
-    [identity.player, identity.brand, identity.year, identity.set, identity.cardNumber, identity.cardType, identity.parallel, identity.gradeCompany, identity.grade, identity.serialNumber]
+    [identity.player, identity.brand, identity.product, identity.year, identity.set, identity.cardNumber, identity.cardType, identity.rookie ? "rookie" : "", identity.insert, identity.parallel, identity.variation, identity.autographType, identity.relicType, identity.gradeCompany, identity.grade, identity.serialNumber]
       .filter(Boolean)
       .join(" ")
   );
 }
 
 export function identitySearchText(identity: Partial<CardIdentity>): string {
-  return [identity.year, identity.player, identity.brand, identity.set, identity.cardNumber ? `#${identity.cardNumber}` : "", identity.cardType, identity.parallel, identity.numbered ? identity.serialNumber : "", identity.gradeCompany, identity.grade]
+  return [identity.year, identity.player, identity.brand, identity.product, identity.set, identity.cardNumber ? `#${identity.cardNumber}` : "", identity.cardType, identity.rookie ? "rookie" : "", identity.insert, identity.parallel, identity.variation, identity.autographType, identity.relicType, identity.numbered ? identity.serialNumber : "", identity.gradeCompany, identity.grade]
     .filter(Boolean)
     .join(" ")
     .replace(/\s+/g, " ")
@@ -69,17 +69,23 @@ export function coerceIdentity(raw: unknown, fallback: CardIdentity): CardIdenti
     sport: asString(value.sport) ?? fallback.sport,
     player: asString(value.player) ?? fallback.player,
     brand: asString(value.brand) ?? fallback.brand,
+    product: asString(value.product) ?? fallback.product,
     cardType: asString(value.cardType) ?? fallback.cardType,
+    rookie: asBoolean(value.rookie) ?? fallback.rookie,
     year: asString(value.year) ?? fallback.year,
     set: asString(value.set) ?? fallback.set,
     cardNumber: asString(value.cardNumber) ?? asString(value.card_number) ?? fallback.cardNumber,
+    insert: asString(value.insert) ?? asString(value.subset) ?? fallback.insert,
     parallel: asString(value.parallel) ?? fallback.parallel,
+    variation: asString(value.variation) ?? fallback.variation,
     gradeCompany: asString(value.gradeCompany) ?? asString(value.grade_company) ?? fallback.gradeCompany,
     grade: asString(value.grade) ?? fallback.grade,
     serialNumber: asString(value.serialNumber) ?? asString(value.serial_number),
     numbered: asBoolean(value.numbered) ?? (Boolean(asString(value.serialNumber) ?? asString(value.serial_number)) || fallback.numbered),
-    autograph: asBoolean(value.autograph),
-    relic: asBoolean(value.relic),
+    autograph: asBoolean(value.autograph) ?? fallback.autograph,
+    autographType: asString(value.autographType) ?? asString(value.autograph_type) ?? fallback.autographType,
+    relic: asBoolean(value.relic) ?? fallback.relic,
+    relicType: asString(value.relicType) ?? asString(value.relic_type) ?? fallback.relicType,
     rawText: asString(value.rawText) ?? asString(value.raw_text) ?? fallback.rawText,
     confidence: clampConfidence(value.confidence, fallback.confidence),
     evidence: asStringArray(value.evidence, fallback.evidence),

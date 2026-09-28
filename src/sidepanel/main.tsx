@@ -606,7 +606,7 @@ function App(): JSX.Element {
           provider: provider.provider,
           model: provider.model,
           trackId: track.id,
-          cardIdentity: JSON.stringify({ player: identity.player, brand: identity.brand, cardType: identity.cardType, year: identity.year, set: identity.set, cardNumber: identity.cardNumber, parallel: identity.parallel, serialNumber: identity.serialNumber, numbered: identity.numbered, autograph: identity.autograph }),
+          cardIdentity: JSON.stringify({ player: identity.player, brand: identity.brand, product: identity.product, year: identity.year, set: identity.set, cardNumber: identity.cardNumber, cardType: identity.cardType, rookie: identity.rookie, insert: identity.insert, parallel: identity.parallel, variation: identity.variation, serialNumber: identity.serialNumber, numbered: identity.numbered, autograph: identity.autograph, autographType: identity.autographType, relic: identity.relic, relicType: identity.relicType }),
           confidence: Math.round(identity.confidence * 100),
           hasPlayer: Boolean(identity.player),
           hasYear: Boolean(identity.year),
@@ -1515,12 +1515,19 @@ function IdentityFacts({ identity, onOverride }: {
   useEffect(() => setRunDraft(serialRun), [serialRun]);
   const facts = [
     ["Player", identity.player],
-    ["Card type", identity.cardType],
     ["Brand", identity.brand],
+    ["Product", identity.product],
     ["Year", identity.year],
     ["Set", identity.set],
     ["Number", identity.cardNumber],
+    ["Card type", identity.cardType],
+    ["Rookie", identity.rookie === undefined ? undefined : identity.rookie ? "Yes" : "No"],
+    ["Insert / subset", identity.insert],
     ["Parallel", identity.parallel],
+    ["Variation", identity.variation],
+    ["Autograph", identity.autograph === undefined ? undefined : identity.autograph ? identity.autographType ? `Yes · ${identity.autographType}` : "Yes" : "No"],
+    ["Relic", identity.relic === undefined ? undefined : identity.relic ? identity.relicType ? `Yes · ${identity.relicType}` : "Yes" : "No"],
+    ["Serial / print run", identity.serialNumber],
     ["Grade", [identity.gradeCompany, identity.grade].filter(Boolean).join(" ")]
   ].filter(([, value]) => value);
 
