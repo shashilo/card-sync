@@ -1,4 +1,5 @@
 import type { CardIdentity, CompLink, CompSearchAttempt, SoldComp, Valuation } from "../../shared/types";
+import { compSearchQueries, rankSoldComps } from "./comp-match";
 import { identitySearchText } from "./identity";
 
 export interface FreeCompLookupResult {
@@ -27,78 +28,79 @@ export async function lookupFreeComps(identity: CardIdentity, compLinks: CompLin
     };
   }
 
-  const queries = freeCompSearchQueries(identity);
-  const exactResult = await fetchEbayComps(ebayLink.url, queries[0]);
-  const searchAttempts: CompSearchAttempt[] = [{
-    source: "eBay sold",
-    query: queries[0],
-    status: exactResult.comps.length ? "results" : exactResult.unreadable ? "unreadable" : "no-results",
-    count: exactResult.comps.length,
-    message: exactResult.comps.length ? "Exact search returned sales." : exactResult.unreadable ? "Could not read exact-search response." : "No exact sales found."
-  }];
-  if (exactResult.comps.length) {
+  const queryTiers = compSearchQueries(identity);
+  const queries = [...new Set([queryTiers[0], queryTiers[1], queryTiers[3], queryTiers.at(-1)].filter((value): value is string => Boolean(value)))];
+  const searchAttempts: CompSearchAttempt[] = [];
+  const searchResults = await Promise.all(queries.map(async (searchQuery) => ({ query: searchQuery, result: await fetchEbayComps(ebayLink.url, searchQuery) })));
+  const rankedComps = rankSoldComps(identity, dedupeComps(searchResults.flatMap(({ result }) => result.comps))).slice(0, 8);
+  searchAttempts.push(...searchResults.map(({ query: searchQuery, result }, index) => {
+    const resultCount = rankSoldComps(identity, result.comps).length;
+    return {
+      source: "eBay sold" as const,
+      query: searchQuery,
+      status: resultCount ? "results" : result.unreadable ? "unreadable" : "no-results",
+      count: resultCount,
+      message: resultCount ? `${resultCount} candidate sales; search tier ${index + 1} ranked by card identity.` : result.unreadable ? "Could not read this search response." : "No matching sales in this search tier."
+    };
+  }));
+  if (rankedComps.length) {
     return {
       status: "free-comps-ready",
-      message: `Found ${exactResult.comps.length} eBay sold comp${exactResult.comps.length === 1 ? "" : "s"} for the exact card search.`,
-      comps: exactResult.comps,
+      message: `Found ${rankedComps.length} eBay sales after searching exact and broader card terms, then ranking titles against the card identity.`,
+      comps: rankedComps,
       searchAttempts
     };
   }
 
-  const fallbackResults = await Promise.all(queries.slice(1).map((searchQuery) => fetchEbayComps(ebayLink.url, searchQuery)));
-  searchAttempts.push(...fallbackResults.map((result, index) => ({
-    source: "eBay sold" as const,
-    query: queries[index + 1],
-    status: result.comps.length ? "results" : result.unreadable ? "unreadable" : "no-results",
-    count: result.comps.length,
-    message: result.comps.length ? "Broader search returned sales." : result.unreadable ? "Could not read broadened-search response." : "No sales found."
-  })));
-  const broadenedComps = dedupeComps(fallbackResults.flatMap((result) => result.comps)).slice(0, 5);
-  if (broadenedComps.length) {
-    return {
-      status: "free-comps-ready",
-      message: `No exact sold comps found; found ${broadenedComps.length} sales from broader player and product searches. Confirm the set, parallel, and serial number before bidding.`,
-      comps: broadenedComps,
-      searchAttempts
-    };
-  }
-
-  const unreadableResponse = exactResult.unreadable || fallbackResults.some((result) => result.unreadable);
+  const unreadableResponse = searchResults.some(({ result }) => result.unreadable);
 
   return {
     status: unreadableResponse ? "error" : "no-free-comps",
     message: unreadableResponse
-      ? "eBay did not return readable sold results for the exact or broadened searches. Open the eBay link to verify results."
-      : "No sold listings matched the exact card or broader player and product searches.",
+      ? "eBay did not return readable sold results for the exact or fuzzy searches. Open the eBay link to verify results."
+      : "No sold listings matched the card identity after exact and fuzzy searches.",
     comps: [],
     searchAttempts
   };
 }
 
 export async function lookup130PointComps(identity: CardIdentity): Promise<FreeCompLookupResult> {
-  const query = identitySearchText(identity);
+  const queryTiers = compSearchQueries(identity);
+  const queries = [...new Set([queryTiers[0], queryTiers[1], queryTiers[3], queryTiers.at(-1)].filter((value): value is string => Boolean(value)))];
+  const query = queries[0] ?? identitySearchText(identity);
   if (identity.confidence < 0.5 || !query) return { status: "needs-identity", message: "Card needs a stronger identity before 130 Point can search sales.", comps: [] };
-  let tabId: number | undefined;
-  try {
-    const tab = await chrome.tabs.create({ url: `https://130point.com/sales/?search=${encodeURIComponent(query)}`, active: false });
-    tabId = tab.id;
-    if (!tabId) throw new Error("Chrome did not return a 130 Point tab ID.");
-    await waitFor130PointTab(tabId);
-    const deadline = Date.now() + 10_000;
-    while (Date.now() < deadline) {
-      const [execution] = await chrome.scripting.executeScript({ target: { tabId }, func: read130PointSalesPage, args: [query] });
-      const snapshot = execution?.result;
-      if (snapshot?.comps?.length) return { status: "free-comps-ready", message: `Found ${snapshot.comps.length} 130 Point sale${snapshot.comps.length === 1 ? "" : "s"}.`, comps: snapshot.comps, searchAttempts: [{ source: "130 Point", query, status: "results", count: snapshot.comps.length, message: "130 Point sales rows were extracted." }] };
-      if (snapshot?.ready) break;
-      await new Promise((resolve) => setTimeout(resolve, 500));
+  const attempts: CompSearchAttempt[] = [];
+  const allComps: SoldComp[] = [];
+  for (const searchQuery of queries) {
+    let tabId: number | undefined;
+    try {
+      const tab = await chrome.tabs.create({ url: `https://130point.com/sales/?search=${encodeURIComponent(searchQuery)}`, active: false });
+      tabId = tab.id;
+      if (!tabId) throw new Error("Chrome did not return a 130 Point tab ID.");
+      await waitFor130PointTab(tabId);
+      const deadline = Date.now() + 10_000;
+      let matches: SoldComp[] = [];
+      while (Date.now() < deadline) {
+        const [execution] = await chrome.scripting.executeScript({ target: { tabId }, func: read130PointSalesPage, args: [searchQuery] });
+        const snapshot = execution?.result;
+        matches = rankSoldComps(identity, snapshot?.comps ?? []);
+        if (matches.length || snapshot?.ready) break;
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+      attempts.push({ source: "130 Point", query: searchQuery, status: matches.length ? "results" : "no-results", count: matches.length, message: matches.length ? `Found ${matches.length} sales; ranked against card identity.` : "No ranked sales for this query." });
+      allComps.push(...matches);
+      if (matches.some((comp) => (comp.matchScore ?? 0) >= 0.55)) break;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "130 Point lookup failed.";
+      attempts.push({ source: "130 Point", query: searchQuery, status: "error", count: 0, message });
+    } finally {
+      if (tabId !== undefined) await chrome.tabs.remove(tabId).catch(() => undefined);
     }
-    return { status: "no-free-comps", message: "130 Point returned no readable sales for this search.", comps: [], searchAttempts: [{ source: "130 Point", query, status: "no-results", count: 0, message: "No readable 130 Point sales rows were found." }] };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "130 Point lookup failed.";
-    return { status: "error", message: `130 Point lookup failed: ${message}`, comps: [], searchAttempts: [{ source: "130 Point", query, status: "error", count: 0, message }] };
-  } finally {
-    if (tabId !== undefined) await chrome.tabs.remove(tabId).catch(() => undefined);
   }
+  const comps = rankSoldComps(identity, dedupeComps(allComps)).slice(0, 8);
+  return comps.length
+    ? { status: "free-comps-ready", message: `Found ${comps.length} 130 Point sales using progressive fuzzy card searches.`, comps, searchAttempts: attempts }
+    : { status: attempts.some((attempt) => attempt.status === "error") ? "error" : "no-free-comps", message: "130 Point returned no sales matching the card identity.", comps: [], searchAttempts: attempts };
 }
 
 async function waitFor130PointTab(tabId: number): Promise<void> {
@@ -152,19 +154,9 @@ async function fetchEbayComps(baseUrl: string, searchQuery: string): Promise<{ c
   }
 }
 
-function freeCompSearchQueries(identity: CardIdentity): string[] {
-  const queries = [
-    identitySearchText(identity),
-    [identity.year, identity.player, identity.brand, identity.set, identity.cardNumber ? `#${identity.cardNumber.replace(/^#/, "")}` : "", identity.gradeCompany, identity.grade].filter(Boolean).join(" "),
-    [identity.year, identity.player, identity.brand, identity.set].filter(Boolean).join(" "),
-    [identity.year, identity.player, identity.brand].filter(Boolean).join(" "),
-    [identity.year, identity.player].filter(Boolean).join(" ")
-  ];
-  return [...new Set(queries.map((value) => value.replace(/\s+/g, " ").trim()).filter(Boolean))];
-}
-
 export function valuationFromFreeComps(identity: CardIdentity, comps: SoldComp[], maxBidPercent = 80): Valuation {
-  const prices = comps.map((comp) => comp.price).filter((price) => Number.isFinite(price) && price > 0).sort((a, b) => a - b);
+  const usableComps = comps.filter((comp) => Number.isFinite(comp.price) && comp.price > 0 && (comp.matchScore === undefined || comp.matchScore >= 0.55));
+  const prices = usableComps.map((comp) => comp.price).sort((a, b) => a - b);
   if (!prices.length) {
     return {
       low: 0,
@@ -180,15 +172,15 @@ export function valuationFromFreeComps(identity: CardIdentity, comps: SoldComp[]
   }
 
   const median = prices[Math.floor(prices.length / 2)];
-  const source = comps[0]?.source ?? "eBay sold";
+  const source = usableComps[0]?.source ?? "eBay sold";
   return {
     low: Math.round(median * 0.85),
     high: Math.round(median * 1.15),
-    maxBid: Math.round((comps[0]?.price ?? median) * Math.max(0, Math.min(100, maxBidPercent)) / 100),
+    maxBid: Math.round((usableComps[0]?.price ?? median) * Math.max(0, Math.min(100, maxBidPercent)) / 100),
     currency: "USD",
     confidence: Math.min(0.68, Math.max(0.5, identity.confidence)),
     source: "free-comps",
-    compCount: prices.length,
+    compCount: usableComps.length,
     reasons: [`${source} history sample of ${prices.length} visible sale${prices.length === 1 ? "" : "s"}.`],
     warnings: [source === "Card Ladder"
       ? "Card Ladder search results can include nearby variants or grades; confirm each match before bidding."

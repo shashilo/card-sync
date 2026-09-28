@@ -41,8 +41,8 @@ export function generateCompLinks(identity: CardIdentity): CompLink[] {
 export function buildValuation(
   identity: CardIdentity,
   sessionCache: Map<string, Valuation>,
-  _aiEstimate: AiValueEstimate | undefined,
-  _allowAiEstimate: boolean,
+  aiEstimate: AiValueEstimate | undefined,
+  allowAiEstimate: boolean,
   priceGuideQuote?: PriceGuideQuote,
   maxBidPercent = 80
 ): Valuation {
@@ -58,6 +58,22 @@ export function buildValuation(
     };
   }
 
+  if (allowAiEstimate && identity.confidence >= 0.65 && identity.player && aiEstimate?.low && aiEstimate?.high) {
+    const low = Math.max(1, Math.min(aiEstimate.low, aiEstimate.high));
+    const high = Math.max(low, aiEstimate.high);
+    return withMaxBidPercent({
+      low,
+      high,
+      maxBid: 0,
+      currency: "USD",
+      confidence: Math.min(0.35, identity.confidence, aiEstimate.confidence ?? 0.35),
+      source: "ai-estimate",
+      compCount: 0,
+      reasons: aiEstimate.reasons?.length ? aiEstimate.reasons : ["No sold comp or guide value was available; this is a model-generated estimate."],
+      warnings: [...(aiEstimate.warnings ?? []), "AI PRICE · NOT A SOLD COMP. AI card prices can be inaccurate; verify against completed sales before bidding."]
+    }, maxBidPercent);
+  }
+
   return {
     low: 0,
     high: 0,
@@ -67,7 +83,7 @@ export function buildValuation(
     source: "none",
     compCount: 0,
     reasons: ["No sold comp or configured price-guide value is available."],
-    warnings: ["No price is shown until a real source returns a value. Open the comp links or retry the lookup."]
+    warnings: ["No sourced price is available. Open the comp links or retry the lookup."]
   };
 }
 

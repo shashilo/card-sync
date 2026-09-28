@@ -76,6 +76,8 @@ export interface SoldComp {
   url: string;
   soldDate?: string;
   verified?: boolean;
+  matchScore?: number;
+  matchQuality?: "strong" | "close" | "broad";
 }
 
 export interface CompSearchAttempt {

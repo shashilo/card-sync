@@ -53,6 +53,7 @@ export function labelForTrack(track: Pick<TrackSummary, "stage" | "identity" | "
   const identityConfidence = track.identity?.confidence ?? track.detectionConfidence;
 
   if (track.stage === "no-bid") return `No-bid signal · ${Math.round(identityConfidence * 100)}%`;
+  if (track.valuation?.source === "ai-estimate") return `AI price ${formatPrice((track.valuation.low + track.valuation.high) / 2)} · verify comps`;
   if (track.valuation?.source && ["session-cache", "price-guide", "free-comps"].includes(track.valuation.source)) {
     return `${formatPrice(track.valuation.low)}-${formatPrice(track.valuation.high)} · Max ${formatPrice(
       track.valuation.maxBid

@@ -16,6 +16,7 @@ import { lookupPriceGuide, type PriceGuideLookupResult } from "./lib/price-guide
 import { lookup130PointComps, lookupFreeComps, valuationFromFreeComps } from "./lib/free-comps";
 import type { FreeCompLookupResult } from "./lib/free-comps";
 import { lookupCardLadderComps } from "./lib/card-ladder";
+import { rankSoldComps } from "./lib/comp-match";
 import { withMaxBidPercent, generateCompLinks, buildValuation, rememberValuation, stageFor } from "./lib/pricing";
 import { rememberCardFingerprint, sameCardFingerprint, shouldPersistScanHistory, shouldStartScanForFingerprint, type ActiveScanFingerprint } from "./lib/scan-gate";
 import { formatPrice, labelForTrack, priceLookupLabel, updateTrackedCards, type TrackedCard } from "./lib/tracker";
@@ -593,7 +594,7 @@ function App(): JSX.Element {
     aiIdentificationInFlightRef.current = true;
     nextAiIdentificationAtRef.current = Date.now() + 8_000;
     identifyCard(crop.dataUrl, contextRef.current, settingsRef.current)
-      .then(({ identity: detectedIdentity, error: identificationError }) => {
+      .then(({ identity: detectedIdentity, estimate, error: identificationError }) => {
         const manualOverride = manualIdentityOverridesRef.current.get(track.id);
         const identity = manualOverride && sameCardFingerprint(manualOverride.fingerprint, crop.fingerprint)
           ? { ...detectedIdentity, ...manualOverride.fields, evidence: [...new Set([...detectedIdentity.evidence, "Applied the user's saved numbered/autograph override."])].slice(-6) }
@@ -611,7 +612,16 @@ function App(): JSX.Element {
           hasPlayer: Boolean(identity.player),
           hasYear: Boolean(identity.year),
           hasSet: Boolean(identity.set),
+          hasEstimate: Boolean(estimate),
           error: identificationError ?? ""
+        });
+        logDiagnostic("AI price estimate received", {
+          trackId: track.id,
+          low: estimate?.low ?? null,
+          high: estimate?.high ?? null,
+          confidence: estimate?.confidence ?? null,
+          reasons: JSON.stringify(estimate?.reasons ?? []),
+          warnings: JSON.stringify(estimate?.warnings ?? [])
         });
         if (!isCurrentScan(track.id, signature, requestId)) return;
         if (identificationError) {
@@ -625,18 +635,21 @@ function App(): JSX.Element {
           });
           return;
         }
-        const valuation = buildValuation(
+        const newValuation = buildValuation(
           identity,
           sessionCacheRef.current,
-          undefined,
-          false,
+          estimate,
+          true,
           undefined,
           settingsRef.current.maxBidPercent
         );
+        const existingValuation = tracksRef.current.find((candidate) => candidate.id === track.id)?.valuation;
+        const valuation = isSourcedValuation(existingValuation) ? existingValuation : newValuation;
         logDiagnostic("Valuation decision", {
           trackId: track.id,
           source: valuation.source,
           identityConfidence: Math.round(identity.confidence * 100),
+          estimateConfidence: estimate?.confidence ?? null,
           low: valuation.low,
           high: valuation.high,
           maxBid: valuation.maxBid,
@@ -693,7 +706,7 @@ function App(): JSX.Element {
       logDiagnostic("Card Ladder search attempt", { trackId, query: attempt.query, status: attempt.status, count: attempt.count, message: attempt.message });
     }
     for (const comp of ladderResult.comps) {
-      logDiagnostic("Card Ladder sale extracted", { trackId, title: comp.title, price: comp.price, soldDate: comp.soldDate ?? "", verified: Boolean(comp.verified), url: comp.url });
+      logDiagnostic("Card Ladder sale extracted", { trackId, title: comp.title, price: comp.price, soldDate: comp.soldDate ?? "", verified: Boolean(comp.verified), matchQuality: comp.matchQuality ?? "unranked", matchScore: comp.matchScore ?? null, url: comp.url });
     }
     logDiagnostic("Card Ladder search completed", { trackId, status: ladderResult.status, count: ladderResult.comps.length, message: ladderResult.message });
     if (ladderResult.comps.length || !settingsRef.current.priceGuideProxyUrl.trim()) {
@@ -792,18 +805,42 @@ function App(): JSX.Element {
       priceLookup: priceLookupState("free-comps-pending", "Fetching Card Ladder sales comps.")
     });
     const pointResult = await lookup130PointComps(identity);
-    const ladderResult = pointResult.comps.length ? pointResult : (initialLadderResult ?? await lookupCardLadderComps(identity));
-    const result = pointResult.comps.length ? pointResult : (ladderResult.comps.length ? ladderResult : await lookupFreeComps(identity, compLinks));
-    const compSearchAttempts = [...(ladderResult.searchAttempts ?? []), ...(ladderResult.comps.length ? [] : result.searchAttempts ?? [])];
-    if (!ladderResult.comps.length) {
+    const hasUsableSale = (lookup: FreeCompLookupResult) => lookup.comps.some((comp) => comp.matchScore === undefined || comp.matchScore >= 0.55);
+    const ladderResult = hasUsableSale(pointResult) ? pointResult : (initialLadderResult ?? await lookupCardLadderComps(identity));
+    let result = hasUsableSale(pointResult)
+      ? pointResult
+      : hasUsableSale(ladderResult)
+        ? ladderResult
+        : await lookupFreeComps(identity, compLinks);
+    if (!hasUsableSale(result)) {
+      const nearbyComps = rankSoldComps(identity, [
+        ...pointResult.comps,
+        ...(ladderResult === pointResult ? [] : ladderResult.comps),
+        ...result.comps
+      ]).slice(0, 8);
+      if (nearbyComps.length) {
+        result = {
+          ...result,
+          status: "free-comps-ready",
+          message: "Only nearby or broad matches were found. They are shown for reference and are not used as the sold price.",
+          comps: nearbyComps
+        };
+      }
+    }
+    const compSearchAttempts = [
+      ...(ladderResult === pointResult ? [] : pointResult.searchAttempts ?? []),
+      ...(ladderResult.searchAttempts ?? []),
+      ...(hasUsableSale(ladderResult) ? [] : result.searchAttempts ?? [])
+    ];
+    if (!hasUsableSale(ladderResult)) {
       for (const attempt of result.searchAttempts ?? []) {
         logDiagnostic("eBay sold search attempt", { trackId, query: attempt.query, status: attempt.status, count: attempt.count, message: attempt.message });
       }
     }
     for (const comp of result.comps) {
-      logDiagnostic("Sold comp considered", { trackId, source: comp.source, title: comp.title, price: comp.price, soldDate: comp.soldDate ?? "", verified: Boolean(comp.verified), url: comp.url });
+      logDiagnostic("Sold comp considered", { trackId, source: comp.source, title: comp.title, price: comp.price, soldDate: comp.soldDate ?? "", verified: Boolean(comp.verified), matchQuality: comp.matchQuality ?? "unranked", matchScore: comp.matchScore ?? null, url: comp.url });
     }
-    const resultMessage = ladderResult.comps.length
+    const resultMessage = hasUsableSale(ladderResult)
       ? ladderResult.message
       : result.comps.length
         ? `${ladderResult.message} Using the eBay fallback. ${result.message}`
@@ -811,7 +848,7 @@ function App(): JSX.Element {
     logDiagnostic("Free comps lookup completed", { provider: result.comps[0]?.source ?? "none", status: result.status, count: result.comps.length, identityConfidence: Math.round(identity.confidence * 100), message: resultMessage });
     if (signature && !isCurrentScan(trackId, signature, requestId)) return;
 
-    const valuation = result.comps.length
+    const candidateValuation = result.comps.length
       ? valuationFromFreeComps(identity, result.comps, settingsRef.current.maxBidPercent)
       : {
           low: 0,
@@ -824,20 +861,25 @@ function App(): JSX.Element {
           reasons: ["No sold price was extracted from Card Ladder, 130 Point, or eBay."],
           warnings: ["No price is shown because the sold-comp lookup completed without a usable source price."]
         };
-    if (!result.comps.length) {
+    const existingValuation = tracksRef.current.find((candidate) => candidate.id === trackId)?.valuation;
+    const valuation = candidateValuation.source === "none" && existingValuation?.source === "ai-estimate" ? existingValuation : candidateValuation;
+    if (valuation.source === "none" || valuation.source === "ai-estimate") {
       logDiagnostic("No sourced price found", {
         trackId,
-        suppressedPriorSource: tracksRef.current.find((candidate) => candidate.id === trackId)?.valuation?.source ?? "none",
+        retainedFallbackSource: valuation.source === "ai-estimate" ? "AI estimate" : "none",
         message: resultMessage,
         attempts: JSON.stringify(compSearchAttempts)
       });
     }
-    if (result.comps.length && valuation) {
-      const sortedPrices = result.comps.map((comp) => comp.price).filter((price) => price > 0).sort((a, b) => a - b);
+    if (valuation.source === "free-comps") {
+      const usedComps = result.comps.filter((comp) => comp.price > 0 && (comp.matchScore === undefined || comp.matchScore >= 0.55));
+      const sortedPrices = usedComps.map((comp) => comp.price).sort((a, b) => a - b);
       const medianPrice = sortedPrices[Math.floor(sortedPrices.length / 2)];
       logDiagnostic("Comp valuation decision", {
         trackId,
         source: valuation.source,
+        usedComps: JSON.stringify(usedComps.map((comp) => ({ source: comp.source, title: comp.title, price: comp.price, soldDate: comp.soldDate ?? null, matchQuality: comp.matchQuality ?? "unranked", matchScore: comp.matchScore ?? null }))),
+        excludedComps: JSON.stringify(result.comps.filter((comp) => !usedComps.includes(comp)).map((comp) => ({ title: comp.title, price: comp.price, matchQuality: comp.matchQuality ?? "unranked", matchScore: comp.matchScore ?? null }))),
         includedPrices: JSON.stringify(sortedPrices),
         count: sortedPrices.length,
         medianPrice,
@@ -1258,7 +1300,7 @@ function DetailPanel({ track, onIdentityOverride }: {
 
       {isRealValuation(track.valuation) ? (
         <div className="valueBox">
-          {track.freeComps?.[0] ? (
+          {track.valuation.source === "free-comps" && track.freeComps?.[0] ? (
             <>
               <span>Last sold · {track.freeComps[0].source}</span>
               <strong>{formatPrice(track.freeComps[0].price)}</strong>
@@ -1276,7 +1318,8 @@ function DetailPanel({ track, onIdentityOverride }: {
               <strong>{formatPrice((track.valuation.low + track.valuation.high) / 2)}</strong>
             </>
           )}
-          <small>Suggested max bid: {formatPrice(track.valuation.maxBid)}</small>
+          <small>{track.valuation.source === "ai-estimate" ? "AI-based suggested max bid" : "Suggested max bid"}: {formatPrice(track.valuation.maxBid)}</small>
+          {track.valuation.source === "ai-estimate" ? <small className="warningText">AI price only · not a sold comp · verify before bidding</small> : null}
           {track.priceLookup ? <small className={`priceStatus ${track.priceLookup.status}`}>{track.priceLookup.message}</small> : null}
         </div>
       ) : (
@@ -1291,7 +1334,7 @@ function DetailPanel({ track, onIdentityOverride }: {
       )}
 
       {track.identity ? <IdentityFacts identity={track.identity} onOverride={(fields) => onIdentityOverride(track.id, fields)} /> : null}
-      {track.valuation && track.valuation.source !== "ai-estimate" && track.valuation.source !== "seeded-demo" ? <ValuationNotes valuation={track.valuation} /> : null}
+      {track.valuation && track.valuation.source !== "seeded-demo" ? <ValuationNotes valuation={track.valuation} /> : null}
       {track.freeComps?.length ? <FreeCompsPanel comps={track.freeComps} /> : null}
 
       {track.compLinks.length ? (
@@ -1311,13 +1354,18 @@ function DetailPanel({ track, onIdentityOverride }: {
 
 function valuationTitle(valuation: Valuation): string {
   if (valuation.source === "price-guide" || valuation.priceGuideQuote) return "Price-backed Fast Value";
-  if (valuation.source === "free-comps") return "Best-effort Free Comps";
+  if (valuation.source === "free-comps") return "Sold comps";
+  if (valuation.source === "ai-estimate") return "AI price · not a sold comp";
   if (valuation.source === "seeded-demo") return "Demo Fast Value";
   if (valuation.source === "session-cache") return "Cached Fast Value";
   return "Fast Value";
 }
 
 function isRealValuation(valuation?: Valuation): valuation is Valuation {
+  return Boolean(valuation && ["session-cache", "price-guide", "free-comps", "ai-estimate"].includes(valuation.source));
+}
+
+function isSourcedValuation(valuation?: Valuation): valuation is Valuation {
   return Boolean(valuation && ["session-cache", "price-guide", "free-comps"].includes(valuation.source));
 }
 
@@ -1363,11 +1411,12 @@ function HistoryPanel({ items, onClear }: { items: ScanHistoryItem[]; onClear: (
 }
 
 function HistoryPriceSummary({ item }: { item: ScanHistoryItem }): JSX.Element {
-  const latestSale = item.freeComps?.[0];
+  const latestSale = item.freeComps?.find((comp) => comp.matchScore === undefined || comp.matchScore >= 0.55);
   const guide = item.valuation?.priceGuideQuote;
   const cachedSourcedPrice = item.valuation?.source === "session-cache" ? (item.valuation.low + item.valuation.high) / 2 : undefined;
-  const referencePrice = latestSale?.price ?? guide?.selectedPrice ?? cachedSourcedPrice;
-  const referenceLabel = latestSale ? `Last sold · ${latestSale.source}` : guide ? "Price guide" : cachedSourcedPrice ? "Previously sourced price" : "No price found";
+  const aiPrice = item.valuation?.source === "ai-estimate" ? (item.valuation.low + item.valuation.high) / 2 : undefined;
+  const referencePrice = latestSale?.price ?? guide?.selectedPrice ?? cachedSourcedPrice ?? aiPrice;
+  const referenceLabel = latestSale ? `Last sold · ${latestSale.source}` : guide ? "Price guide" : cachedSourcedPrice ? "Previously sourced price" : aiPrice ? "AI price · not a sale" : "No price found";
 
   return (
     <div className="historyPrice">
@@ -1376,7 +1425,7 @@ function HistoryPriceSummary({ item }: { item: ScanHistoryItem }): JSX.Element {
       {latestSale?.soldDate ? <small>{latestSale.soldDate}</small> : null}
       {isRealValuation(item.valuation) ? (
         <small>
-          Suggested max bid: {formatPrice(item.valuation.maxBid)}
+          {item.valuation.source === "ai-estimate" ? "AI-based suggested max bid" : "Suggested max bid"}: {formatPrice(item.valuation.maxBid)}
           {item.maxBidPercent !== undefined ? ` (${item.maxBidPercent}%)` : ""}
         </small>
       ) : null}
@@ -1385,12 +1434,13 @@ function HistoryPriceSummary({ item }: { item: ScanHistoryItem }): JSX.Element {
 }
 
 function HistoryDecisionDetails({ item }: { item: ScanHistoryItem }): JSX.Element {
-  const valuation = item.valuation?.source === "ai-estimate" || item.valuation?.source === "seeded-demo" ? undefined : item.valuation;
-  const latestSale = item.freeComps?.[0];
+  const valuation = item.valuation?.source === "seeded-demo" ? undefined : item.valuation;
+  const latestSale = item.freeComps?.find((comp) => comp.matchScore === undefined || comp.matchScore >= 0.55);
   const guide = valuation?.priceGuideQuote;
   const cachedSourcedPrice = valuation?.source === "session-cache" ? (valuation.low + valuation.high) / 2 : undefined;
-  const referencePrice = latestSale?.price ?? guide?.selectedPrice ?? cachedSourcedPrice;
-  const referenceSource = latestSale?.source ?? (guide ? `${guide.provider} · ${guide.selectedCondition}` : valuation?.source ?? "No priced source");
+  const aiPrice = valuation?.source === "ai-estimate" ? (valuation.low + valuation.high) / 2 : undefined;
+  const referencePrice = latestSale?.price ?? guide?.selectedPrice ?? cachedSourcedPrice ?? aiPrice;
+  const referenceSource = latestSale?.source ?? (guide ? `${guide.provider} · ${guide.selectedCondition}` : aiPrice ? "AI price · not a sale" : valuation?.source ?? "No priced source");
   const hasDetails = Boolean(item.freeComps?.length || item.compSearchAttempts?.length || valuation || item.identity?.evidence?.length);
 
   return (
@@ -1404,7 +1454,7 @@ function HistoryDecisionDetails({ item }: { item: ScanHistoryItem }): JSX.Elemen
             {isRealValuation(valuation) ? (
               <p>
                 {item.maxBidPercent !== undefined && referencePrice !== undefined
-                  ? `${formatPrice(referencePrice)} × ${item.maxBidPercent}% = ${formatPrice(valuation.maxBid)} suggested max bid.`
+                  ? `${formatPrice(referencePrice)} × ${item.maxBidPercent}% = ${formatPrice(valuation.maxBid)} ${valuation.source === "ai-estimate" ? "AI-based suggested max bid" : "suggested max bid"}.`
                   : `Recorded suggested max bid: ${formatPrice(valuation.maxBid)}.`}
               </p>
             ) : null}
@@ -1429,6 +1479,7 @@ function HistoryDecisionDetails({ item }: { item: ScanHistoryItem }): JSX.Elemen
               {item.freeComps.map((comp, index) => (
                 <a className="historySale" href={comp.url} key={`${comp.url}-${index}`} rel="noreferrer" target="_blank">
                   <span>{formatPrice(comp.price)} · {comp.source}{comp.soldDate ? ` · ${comp.soldDate}` : ""}{comp.verified ? " · Verified" : ""}</span>
+                  {comp.matchQuality ? <small>Identity match: {comp.matchQuality} · {Math.round((comp.matchScore ?? 0) * 100)}%</small> : null}
                   <small>{comp.title}</small>
                 </a>
               ))}
@@ -1511,6 +1562,7 @@ function FreeCompsPanel({ comps }: { comps: NonNullable<TrackedCard["freeComps"]
         <a href={comp.url} key={`${comp.title}-${comp.price}-${comp.url}`} rel="noreferrer" target="_blank">
           <strong>{formatPrice(comp.price)}</strong>
           <span>{comp.title}</span>
+          {comp.matchQuality ? <small>Match: {comp.matchQuality} · {Math.round((comp.matchScore ?? 0) * 100)}%</small> : null}
           {comp.soldDate || comp.verified ? <small>{[comp.soldDate, comp.verified ? "Card Ladder verified" : undefined].filter(Boolean).join(" · ")}</small> : null}
         </a>
       ))}
@@ -1688,7 +1740,7 @@ function SettingsPanel({
           value={draft.maxBidPercent}
           onChange={(event) => setDraft({ ...draft, maxBidPercent: Number(event.target.value) })}
         />
-        <span className="helper">Uses the latest sold comp or configured price guide. No AI-generated prices are shown.</span>
+        <span className="helper">Uses sold comps or the configured price guide when available. AI fallback prices are clearly marked and may be inaccurate.</span>
       </label>
       <label className="checkRow">
         <input type="checkbox" checked={draft.autoScan} onChange={(event) => setDraft({ ...draft, autoScan: event.target.checked })} />

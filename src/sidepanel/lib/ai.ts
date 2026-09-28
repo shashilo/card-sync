@@ -1,8 +1,10 @@
 import type { CardIdentity, ExtensionSettings, PageContext, ProviderSettings } from "../../shared/types";
 import { coerceIdentity, inferIdentityFromContext } from "./identity";
+import type { AiValueEstimate } from "./pricing";
 
 export interface AiCardResult {
   identity: CardIdentity;
+  estimate?: AiValueEstimate;
   error?: string;
 }
 
@@ -184,10 +186,12 @@ function buildPrompt(mode: IdentifyMode): string {
     "Return strict JSON only.",
     ...slabInstructions,
     "If year, set, player, grade, card number, or parallel is uncertain, leave it blank or lower confidence.",
+    "Give a conservative provisional raw-card value only if the card identity is reasonably clear. It is not a sale record; include reasons and warnings, and omit the estimate if the identity is too uncertain.",
     "",
     "JSON shape:",
     "{",
     '  "identity": { "sport": "", "player": "", "brand": "", "product": "", "cardType": "", "rookie": null, "year": "", "set": "", "cardNumber": "", "insert": "", "parallel": "", "variation": "", "gradeCompany": "", "grade": "", "serialNumber": "", "numbered": null, "autograph": null, "autographType": "", "relic": null, "relicType": "", "rawText": "", "confidence": 0.0, "evidence": [], "alternatives": [] },',
+    '  "estimate": { "low": 0, "high": 0, "maxBid": 0, "confidence": 0.0, "reasons": [], "warnings": [] }',
     "}"
   ].join("\n");
   return prompt;
@@ -207,6 +211,7 @@ function parseProviderJson(text: string | undefined, fallback: CardIdentity): Ai
   const parsed = JSON.parse(stripJsonFence(text)) as Record<string, unknown>;
   return {
     identity: coerceIdentity(parsed.identity ?? parsed, fallback),
+    estimate: coerceEstimate(parsed.estimate)
   };
 }
 
@@ -265,4 +270,34 @@ function timeoutMessage(provider: ProviderSettings, mode: IdentifyMode): string 
 
 function isAbortError(value: unknown): boolean {
   return value instanceof DOMException && (value.name === "TimeoutError" || value.name === "AbortError");
+}
+
+function coerceEstimate(value: unknown): AiValueEstimate | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = value as Record<string, unknown>;
+  const low = positiveNumber(raw.low);
+  const high = positiveNumber(raw.high);
+  if (!low || !high) return undefined;
+  return {
+    low,
+    high,
+    maxBid: positiveNumber(raw.maxBid) ?? positiveNumber(raw.max_bid),
+    confidence: confidenceValue(raw.confidence),
+    reasons: stringList(raw.reasons),
+    warnings: stringList(raw.warnings)
+  };
+}
+
+function positiveNumber(value: unknown): number | undefined {
+  const number = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(number) && number > 0 ? number : undefined;
+}
+
+function confidenceValue(value: unknown): number | undefined {
+  const number = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(number) ? Math.max(0, Math.min(1, number)) : undefined;
+}
+
+function stringList(value: unknown): string[] | undefined {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0).slice(0, 5) : undefined;
 }

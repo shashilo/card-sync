@@ -1,5 +1,6 @@
 import type { CardIdentity, CompSearchAttempt, SoldComp } from "../../shared/types";
 import type { FreeCompLookupResult } from "./free-comps";
+import { compSearchQueries, rankSoldComps } from "./comp-match";
 import { identitySearchText } from "./identity";
 
 const CARD_LADDER_SALES_URL = "https://app.cardladder.com/sales-history?direction=desc&sort=date&q=";
@@ -18,13 +19,9 @@ export async function lookupCardLadderComps(identity: CardIdentity): Promise<Fre
     return { status: "needs-identity", message: "Card needs a stronger identity before Card Ladder can search sales.", comps: [] };
   }
 
-  const queries = [...new Set([
-    query,
-    [identity.year, identity.player, identity.brand, identity.set, identity.cardNumber ? `#${identity.cardNumber.replace(/^#/, "")}` : "", identity.gradeCompany, identity.grade].filter(Boolean).join(" "),
-    [identity.year, identity.player, identity.brand, identity.set].filter(Boolean).join(" "),
-    [identity.year, identity.player, identity.brand].filter(Boolean).join(" ")
-  ].map((value) => value.replace(/\s+/g, " ").trim()).filter(Boolean))];
+  const queries = compSearchQueries(identity);
   const searchAttempts: CompSearchAttempt[] = [];
+  const nearbyCandidates: SoldComp[] = [];
 
   for (const searchQuery of queries) {
     let tabId: number | undefined;
@@ -39,15 +36,18 @@ export async function lookupCardLadderComps(identity: CardIdentity): Promise<Fre
       while (Date.now() < deadline) {
         const [execution] = await chrome.scripting.executeScript({ target: { tabId }, func: readCardLadderSalesPage });
         lastSnapshot = execution?.result;
-        if (lastSnapshot?.comps.length) {
-          searchAttempts.push({ source: "Card Ladder", query: searchQuery, status: "results", count: lastSnapshot.comps.length, message: "Sales rows were extracted." });
+        const matchedComps = rankSoldComps(identity, lastSnapshot?.comps ?? []);
+        if (matchedComps.length) nearbyCandidates.push(...matchedComps);
+        if (matchedComps.some((comp) => (comp.matchScore ?? 0) >= 0.55)) {
+          searchAttempts.push({ source: "Card Ladder", query: searchQuery, status: "results", count: matchedComps.length, message: `${matchedComps.length} sales ranked by player, year, card number, insert, and variant text.` });
           return {
             status: "free-comps-ready",
-            message: `Found ${lastSnapshot.comps.length} Card Ladder sale${lastSnapshot.comps.length === 1 ? "" : "s"}${lastSnapshot.comps.some((comp) => comp.verified) ? ", including research-team verified sales" : ""}${searchQuery !== query ? ` with broader query “${searchQuery}”` : ""}.`,
-            comps: lastSnapshot.comps,
+            message: `Found ${matchedComps.length} Card Ladder sale${matchedComps.length === 1 ? "" : "s"}${matchedComps.some((comp) => comp.verified) ? ", including research-team verified sales" : ""}${searchQuery !== query ? ` with broader query “${searchQuery}”` : ""}.`,
+            comps: matchedComps,
             searchAttempts
           };
         }
+        if (matchedComps.length && lastSnapshot?.resultsReady) break;
         if (lastSnapshot && !lastSnapshot.loggedIn) {
           searchAttempts.push({ source: "Card Ladder", query: searchQuery, status: "login-required", count: 0, message: "The page showed a sign-in state." });
           return { status: "error", message: "Card Ladder opened a sign-in page. Sign in to your Pro account in Chrome and try again.", comps: [], searchAttempts };
@@ -73,6 +73,10 @@ export async function lookupCardLadderComps(identity: CardIdentity): Promise<Fre
   }
 
   const hadReadableNoSales = searchAttempts.some((attempt) => attempt.status === "no-results");
+  const broadMatches = rankSoldComps(identity, nearbyCandidates).slice(0, 8);
+  if (broadMatches.length) {
+    return { status: "free-comps-ready", message: `Found ${broadMatches.length} nearby Card Ladder results, but none matched enough card details to price as a comp.`, comps: broadMatches, searchAttempts };
+  }
   return {
     status: hadReadableNoSales ? "no-free-comps" : "error",
     message: hadReadableNoSales

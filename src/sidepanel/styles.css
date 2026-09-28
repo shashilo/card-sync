@@ -646,6 +646,11 @@ h3 {
   font-size: 22px;
 }
 
+.valueBox .warningText {
+  color: #fde68a;
+  font-weight: 700;
+}
+
 .facts {
   display: grid;
   gap: 7px;
