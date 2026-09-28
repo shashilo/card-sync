@@ -354,13 +354,13 @@ function App(): JSX.Element {
     }, cadence);
   }
 
-  function runScanTick(): void {
+  function runScanTick(manualScan = false): void {
     const video = videoRef.current;
     const canvas = analysisCanvasRef.current;
     if (!video || !canvas || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
 
     const now = Date.now();
-    if (!settingsRef.current.autoScan) return;
+    if (!settingsRef.current.autoScan && !manualScan) return;
     const currentSettings = settingsRef.current;
     const targetTabId = captureTabIdRef.current;
     if (targetTabId && now - lastContextPullAtRef.current > 500) {
@@ -400,6 +400,17 @@ function App(): JSX.Element {
 
     tracksRef.current = nextTracks;
     setTracks(nextTracks);
+    if (manualScan) {
+      const currentTrack = nextTracks[0];
+      if (currentTrack) {
+        startTrackScan(currentTrack, now, { force: true }).then((started) => {
+          if (!started) setError("Could not capture the current card frame. Try Scan card again.");
+        }).catch((caught) => setError(caught instanceof Error ? caught.message : "Identification failed."));
+      } else {
+        logDiagnostic("Manual scan found no card candidate", { videoWidth: video.videoWidth, videoHeight: video.videoHeight });
+      }
+      return;
+    }
     prewarmIdentities(nextTracks, now).catch((caught) => {
       setError(caught instanceof Error ? caught.message : "Identification failed.");
     });
@@ -410,10 +421,7 @@ function App(): JSX.Element {
       startScanning();
       return;
     }
-    const previous = settingsRef.current.autoScan;
-    settingsRef.current.autoScan = true;
-    runScanTick();
-    settingsRef.current.autoScan = previous;
+    runScanTick(true);
   }
 
   async function prewarmIdentities(currentTracks: TrackedCard[], now: number): Promise<void> {
@@ -485,11 +493,11 @@ function App(): JSX.Element {
 
     // Keep the active request record stable until its response is applied. Updating it
     // for every slightly different video frame makes a valid AI response look stale.
-    if (aiIdentificationInFlightRef.current) {
+    if (!options.force && aiIdentificationInFlightRef.current) {
       logDiagnostic("Card identification skipped", { reason: "another-request-in-flight", provider: settingsRef.current.provider.provider });
       return false;
     }
-    if (Date.now() < nextAiIdentificationAtRef.current) {
+    if (!options.force && Date.now() < nextAiIdentificationAtRef.current) {
       logDiagnostic("Card identification skipped", { reason: "provider-request-cooldown", provider: settingsRef.current.provider.provider });
       return false;
     }
