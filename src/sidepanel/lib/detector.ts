@@ -237,11 +237,11 @@ export function detectCardBoxes(
           const center = centerBonus({ x, y, width: w, height: h }, searchBounds);
           const size = sizeBonus({ width: w, height: h }, searchBounds);
           const score =
-            borderDensity * 0.48 +
-            innerEdges * 0.1 +
-            contrast * 0.08 +
-            center * 0.28 +
-            size * 0.06;
+            borderDensity * 0.4 +
+            innerEdges * 0.08 +
+            contrast * 0.06 +
+            center * 0.24 +
+            size * 0.22;
 
           if (score < 0.22) continue;
 
