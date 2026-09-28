@@ -60,6 +60,9 @@ async function identifyWithOpenAiCompatible(
 ): Promise<AiCardResult> {
   const body: Record<string, unknown> = {
     model: provider.model,
+    // OpenRouter otherwise defaults to the model's very large output limit,
+    // which can exceed the account's available credits before generation starts.
+    max_tokens: 1200,
     temperature: 0.1,
     messages: [
       { role: "system", content: buildPrompt(mode) },
