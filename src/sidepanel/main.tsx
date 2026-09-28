@@ -823,7 +823,27 @@ function App(): JSX.Element {
     logDiagnostic("Free comps lookup completed", { provider: result.comps[0]?.source ?? "none", status: result.status, count: result.comps.length, identityConfidence: Math.round(identity.confidence * 100), message: resultMessage });
     if (signature && !isCurrentScan(trackId, signature, requestId)) return;
 
-    const valuation = result.comps.length ? valuationFromFreeComps(identity, result.comps, settingsRef.current.maxBidPercent) : tracksRef.current.find((candidate) => candidate.id === trackId)?.valuation;
+    const valuation = result.comps.length
+      ? valuationFromFreeComps(identity, result.comps, settingsRef.current.maxBidPercent)
+      : {
+          low: 0,
+          high: 0,
+          maxBid: 0,
+          currency: "USD" as const,
+          confidence: identity.confidence,
+          source: "none" as const,
+          compCount: 0,
+          reasons: ["No sold price was extracted from Card Ladder, 130 Point, or eBay."],
+          warnings: ["The provisional AI estimate was suppressed because the sold-comp lookup completed without a usable source price."]
+        };
+    if (!result.comps.length) {
+      logDiagnostic("No sourced price found", {
+        trackId,
+        suppressedPriorSource: tracksRef.current.find((candidate) => candidate.id === trackId)?.valuation?.source ?? "none",
+        message: resultMessage,
+        attempts: JSON.stringify(compSearchAttempts)
+      });
+    }
     if (result.comps.length && valuation) {
       const sortedPrices = result.comps.map((comp) => comp.price).filter((price) => price > 0).sort((a, b) => a - b);
       const medianPrice = sortedPrices[Math.floor(sortedPrices.length / 2)];
