@@ -977,11 +977,10 @@ function App(): JSX.Element {
     const viewport = contextRef.current?.videoViewport;
     if (!canvas || !viewport?.viewportWidth || !viewport.viewportHeight) return undefined;
 
-    const displayRect = viewport.videoRect ?? { x: 0, y: 0, width: viewport.viewportWidth, height: viewport.viewportHeight };
-    const frameX = ((track.box.x - displayRect.x) / Math.max(1, displayRect.width)) * video.videoWidth;
-    const baseFrameY = ((track.box.y - displayRect.y) / Math.max(1, displayRect.height)) * video.videoHeight;
-    const frameW = (track.box.width / Math.max(1, displayRect.width)) * video.videoWidth;
-    const baseFrameH = (track.box.height / Math.max(1, displayRect.height)) * video.videoHeight;
+    const frameX = 0;
+    const baseFrameY = 0;
+    const frameW = video.videoWidth;
+    const baseFrameH = video.videoHeight;
     const yRatio = options.yRatio ?? 0;
     const heightRatio = options.heightRatio ?? 1;
     const frameY = baseFrameY + baseFrameH * yRatio;

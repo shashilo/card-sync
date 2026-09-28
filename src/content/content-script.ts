@@ -263,7 +263,7 @@ function renderTracks(tracks: TrackSummary[]): void {
   latestTracks = tracks;
 
   for (const track of tracks) {
-    const box = track.badgeTone === "red" && videoRect ? videoRect : track.box;
+    const box = videoRect ?? track.box;
 
     const frame = document.createElement("div");
     frame.className = `frame ${track.badgeTone}`;
