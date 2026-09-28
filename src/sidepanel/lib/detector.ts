@@ -103,14 +103,14 @@ function sizeBonus(
   return heightFit * 0.65 + areaFit * 0.35;
 }
 
-function expandBox(
+export function expandBox(
   box: { x: number; y: number; width: number; height: number },
   bounds: { x: number; y: number; width: number; height: number }
 ): Box {
-  // The scan window often hugs the inner card artwork; expand each axis by its
-  // own proportion so portrait cards get enough vertical margin for full edges.
-  const padX = box.width * 0.14;
-  const padY = box.height * 0.14;
+  // Edge scoring can lock onto artwork inside the card. Use a generous margin
+  // so the visible outline and the submitted crop include the full card edges.
+  const padX = box.width * 0.36;
+  const padY = box.height * 0.36;
   const x = clamp(box.x - padX, bounds.x, bounds.x + bounds.width);
   const y = clamp(box.y - padY, bounds.y, bounds.y + bounds.height);
   const right = clamp(box.x + box.width + padX, bounds.x, bounds.x + bounds.width);
