@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { AlertTriangle, BadgeDollarSign, Clock3, Crosshair, ExternalLink, Loader2, Play, Settings, Square, Trash2 } from "lucide-react";
+import { AlertTriangle, BadgeDollarSign, Clock3, Copy, Crosshair, Download, ExternalLink, FileText, Loader2, Play, Settings, Square, Trash2 } from "lucide-react";
 import { consumePendingCapture, type PendingCapture } from "../shared/capture";
 import type { RuntimeMessage } from "../shared/messages";
 import { getActiveTab, sendToActiveTab, sendToTab } from "../shared/messages";
 import { applyProviderPreset, providerPreset, requestCustomProviderPermission } from "../shared/providers";
 import { DEFAULT_SETTINGS, loadSettings, saveSettings } from "../shared/settings";
+import { appendDiagnosticLog, clearDiagnosticLog, readDiagnosticLog, type DiagnosticEntry } from "../shared/diagnostics";
 import type { BadgeTone, CardIdentity, ExtensionSettings, PageContext, PriceLookupState, ScanHistoryItem, TrackSummary, Valuation, VideoViewport } from "../shared/types";
 import { identifyCard, identifySlabLabel } from "./lib/ai";
 import { detectCardBoxes } from "./lib/detector";
@@ -39,6 +40,9 @@ function App(): JSX.Element {
   const [tracks, setTracks] = useState<TrackedCard[]>([]);
   const [activeTrackId, setActiveTrackId] = useState<string | undefined>();
   const [historyItems, setHistoryItems] = useState<ScanHistoryItem[]>([]);
+  const [diagnostics, setDiagnostics] = useState<DiagnosticEntry[]>([]);
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [diagnosticsCopied, setDiagnosticsCopied] = useState(false);
 
   const settingsRef = useRef(settings);
   const contextRef = useRef<PageContext | undefined>();
@@ -60,12 +64,32 @@ function App(): JSX.Element {
   const activeScansRef = useRef(new Map<string, ActiveScan>());
   const contextPrewarmRef = useRef(new Map<string, number>());
   const sessionCacheRef = useRef(new Map<string, Valuation>());
+  const lastDetectorLogAtRef = useRef(0);
+  const lastDetectionCountRef = useRef<number | undefined>();
+
+  function logDiagnostic(event: string, details?: Record<string, string | number | boolean | null>): void {
+    appendDiagnosticLog(event, details).then(setDiagnostics).catch(() => undefined);
+  }
 
   useEffect(() => {
     loadSettings().then((loaded) => {
       setSettings(loaded);
       settingsRef.current = loaded;
+      logDiagnostic("Settings loaded", {
+        provider: loaded.provider.provider,
+        keyConfigured: Boolean(loaded.provider.apiKey.trim()),
+        endpointHost: safeHost(loaded.provider.baseUrl),
+        model: loaded.provider.model || "(empty)"
+      });
     });
+    readDiagnosticLog().then(setDiagnostics).catch(() => undefined);
+    const storageListener = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+      if (area === "local" && changes["cardsync.diagnostics"]) {
+        setDiagnostics(Array.isArray(changes["cardsync.diagnostics"].newValue) ? changes["cardsync.diagnostics"].newValue as DiagnosticEntry[] : []);
+      }
+    };
+    chrome.storage.onChanged.addListener(storageListener);
+    return () => chrome.storage.onChanged.removeListener(storageListener);
   }, []);
 
   useEffect(() => {
@@ -92,15 +116,30 @@ function App(): JSX.Element {
     const listener = (message: RuntimeMessage) => {
       if (message.type === "CS_CONTEXT") {
         setContext(message.context);
+        logDiagnostic("Page context received", {
+          viewportWidth: message.context.videoViewport.viewportWidth,
+          viewportHeight: message.context.videoViewport.viewportHeight,
+          videoFound: Boolean(message.context.videoViewport.videoRect),
+          auctionTextLength: message.context.auctionText.length
+        });
         prewarmPriceGuideFromContext(message.context).catch(() => undefined);
       }
       if (message.type === "CS_MANUAL_CAPTURE") {
+        logDiagnostic("Manual capture requested", { trackId: message.trackId ?? "active" });
         manualCapture(message.trackId).catch((caught) => {
-          setError(caught instanceof Error ? caught.message : "Manual capture failed.");
+          const messageText = caught instanceof Error ? caught.message : "Manual capture failed.";
+          logDiagnostic("Manual capture failed", { message: messageText });
+          setError(messageText);
         });
       }
-      if (message.type === "BG_CAPTURE_READY") startFromPendingCapture(message.capture);
-      if (message.type === "BG_CAPTURE_ERROR") setError(message.message);
+      if (message.type === "BG_CAPTURE_READY") {
+        logDiagnostic("Tab capture armed", { targetTabId: message.capture.targetTabId ?? null });
+        startFromPendingCapture(message.capture);
+      }
+      if (message.type === "BG_CAPTURE_ERROR") {
+        logDiagnostic("Tab capture failed", { message: message.message });
+        setError(message.message);
+      }
     };
     chrome.runtime.onMessage.addListener(listener);
     return () => chrome.runtime.onMessage.removeListener(listener);
@@ -136,6 +175,37 @@ function App(): JSX.Element {
     setSettings(next);
     settingsRef.current = next;
     await saveSettings(next);
+    logDiagnostic("Settings saved", {
+      provider: next.provider.provider,
+      keyConfigured: Boolean(next.provider.apiKey.trim()),
+      endpointHost: safeHost(next.provider.baseUrl),
+      model: next.provider.model || "(empty)"
+    });
+  }
+
+  async function copyDiagnosticLog(): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(diagnostics, null, 2));
+      setDiagnosticsCopied(true);
+      window.setTimeout(() => setDiagnosticsCopied(false), 1800);
+    } catch {
+      setError("Clipboard access was blocked. Download the diagnostic log instead.");
+    }
+  }
+
+  function downloadDiagnosticLog(): void {
+    const blob = new Blob([JSON.stringify(diagnostics, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "cardsync-diagnostics.json";
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function clearDiagnostics(): Promise<void> {
+    await clearDiagnosticLog();
+    setDiagnostics([]);
   }
 
   function startScanning(): void {
@@ -147,6 +217,7 @@ function App(): JSX.Element {
     const runId = scanRunRef.current + 1;
     scanRunRef.current = runId;
     setError(null);
+    logDiagnostic("Opening captured tab stream", { runId, targetTabId: capture.targetTabId ?? null });
 
     const constraints = {
       audio: false,
@@ -167,10 +238,12 @@ function App(): JSX.Element {
           stream.getTracks().forEach((track) => track.stop());
           return;
         }
+        logDiagnostic("Captured tab stream opened", { runId, trackCount: stream.getTracks().length });
         return setupCapturedStream(stream, capture.targetTabId, runId);
       })
       .catch((caught) => {
         if (scanRunRef.current !== runId) return;
+        logDiagnostic("Captured tab stream failed", { runId, message: caught instanceof Error ? caught.message : "Unable to start captured stream" });
         setError(
           [
             caught instanceof Error ? caught.message : "Unable to start captured stream.",
@@ -216,8 +289,17 @@ function App(): JSX.Element {
       cropCanvasRef.current = document.createElement("canvas");
       requestPageContext(tab.id).catch(() => undefined);
       setScanning(true);
+      logDiagnostic("Scanner started", {
+        runId,
+        tabId: tab.id,
+        videoWidth: video.videoWidth,
+        videoHeight: video.videoHeight,
+        provider: settingsRef.current.provider.provider,
+        keyConfigured: Boolean(settingsRef.current.provider.apiKey.trim())
+      });
       scheduleLoop(runId);
     } catch (caught) {
+      logDiagnostic("Scanner setup failed", { runId, message: caught instanceof Error ? caught.message : "Unable to start tab capture" });
       await sendToTab(tab.id, { type: "CS_SET_SCANNING", scanning: false });
       setError(caught instanceof Error ? caught.message : "Unable to start tab capture.");
       stopScanning();
@@ -276,6 +358,13 @@ function App(): JSX.Element {
 
     const videoViewport = contextRef.current?.videoViewport;
     if (!isUsableVideoViewport(videoViewport)) {
+      if (now - lastDetectorLogAtRef.current > 5_000) {
+        lastDetectorLogAtRef.current = now;
+        logDiagnostic("Waiting for Whatnot video viewport", {
+          contextReceived: Boolean(contextRef.current),
+          videoFound: Boolean(contextRef.current?.videoViewport.videoRect)
+        });
+      }
       if (tracksRef.current.length) {
         tracksRef.current = [];
         setTracks([]);
@@ -284,6 +373,17 @@ function App(): JSX.Element {
     }
 
     const detections = detectCardBoxes(video, canvas, videoViewport, currentSettings.maxTrackedCards);
+    if (detections.length !== lastDetectionCountRef.current || now - lastDetectorLogAtRef.current > 5_000) {
+      lastDetectionCountRef.current = detections.length;
+      lastDetectorLogAtRef.current = now;
+      logDiagnostic(detections.length ? "Card candidates detected" : "No card candidates detected", {
+        count: detections.length,
+        videoWidth: video.videoWidth,
+        videoHeight: video.videoHeight,
+        viewportWidth: videoViewport.viewportWidth,
+        viewportHeight: videoViewport.viewportHeight
+      });
+    }
     const nextTracks = updateTrackedCards(tracksRef.current, detections, now, currentSettings.maxTrackedCards);
 
     tracksRef.current = nextTracks;
@@ -319,17 +419,20 @@ function App(): JSX.Element {
       tracksRef.current[0];
 
     if (!streamRef.current || !videoRef.current) {
+      logDiagnostic("Manual capture blocked", { reason: "scanner-not-running" });
       setError("Start scanning before using manual capture.");
       return;
     }
 
     if (!track) {
+      logDiagnostic("Manual capture blocked", { reason: "no-card-outline" });
       setError("No card outline is active yet. Wait for CardSync to draw the card, then click the outline to force capture.");
       return;
     }
 
     const started = await startTrackScan(track, Date.now(), { force: true });
     if (!started) {
+      logDiagnostic("Manual capture blocked", { reason: "crop-not-ready" });
       setError("CardSync could not crop the current card yet. Try again when the outline is visible.");
       return;
     }
@@ -342,7 +445,10 @@ function App(): JSX.Element {
     if (!video) return false;
 
     const crop = cropTrack(video, track);
-    if (!crop) return false;
+    if (!crop) {
+      logDiagnostic("Card crop failed", { trackId: track.id, detectionConfidence: track.detectionConfidence });
+      return false;
+    }
     const slabLabelCrop = cropTrack(video, track, {
       yRatio: 0,
       heightRatio: 0.34,
@@ -369,6 +475,14 @@ function App(): JSX.Element {
       ? priceLookupState("pending", "Checking SportsCardsPro.")
       : priceLookupState("free-comps-pending", "Fetching eBay sold comps.");
     markTrack(track.id, { inFlight: true, identifyRequestedAt: now, stage: "candidate", priceLookup: pendingPriceLookup });
+    logDiagnostic("Card crop ready", {
+      trackId: track.id,
+      cropWidth: cropCanvasRef.current?.width ?? 0,
+      cropHeight: cropCanvasRef.current?.height ?? 0,
+      boxWidth: Math.round(track.box.width),
+      boxHeight: Math.round(track.box.height),
+      detectionConfidence: Math.round(track.detectionConfidence * 100)
+    });
 
     const contextValuation = buildValuation(
       contextIdentity,
@@ -397,6 +511,7 @@ function App(): JSX.Element {
 
     const provider = settingsRef.current.provider;
     if (provider.provider === "mock" || !provider.apiKey.trim()) {
+      logDiagnostic("AI request skipped", { reason: provider.provider === "mock" ? "mock-provider-selected" : "api-key-missing", provider: provider.provider });
       markTrack(track.id, { inFlight: false });
       return true;
     }
@@ -405,8 +520,16 @@ function App(): JSX.Element {
       `${contextRef.current?.auctionText ?? ""} ${contextRef.current?.title ?? ""}`
     );
     if (slabLabelCrop && pageMentionsSlab) {
+      logDiagnostic("Slab label request started", { provider: provider.provider, model: provider.model, endpointHost: safeHost(provider.baseUrl) });
       identifySlabLabel(slabLabelCrop.dataUrl, contextRef.current, settingsRef.current)
-        .then(({ identity, estimate }) => {
+        .then(({ identity, estimate, error: identificationError }) => {
+          logDiagnostic(identificationError ? "Slab label request failed" : "Slab label request completed", {
+            provider: provider.provider,
+            confidence: Math.round(identity.confidence * 100),
+            hasPlayer: Boolean(identity.player),
+            hasSet: Boolean(identity.set),
+            error: identificationError ?? ""
+          });
           if (!isCurrentScan(track.id, signature, requestId)) return;
           if (identity.confidence < 0.5) return;
           const valuation = buildValuation(
@@ -434,11 +557,23 @@ function App(): JSX.Element {
           }, signature).catch(() => undefined);
           applyPriceGuide(track.id, track, crop.dataUrl, identity, signature, requestId).catch(() => undefined);
         })
-        .catch(() => undefined);
+        .catch((caught) => {
+          logDiagnostic("Slab label request failed", { provider: provider.provider, error: caught instanceof Error ? caught.message : "Unknown error" });
+        });
     }
 
+    logDiagnostic("Card identification request started", { provider: provider.provider, model: provider.model, endpointHost: safeHost(provider.baseUrl) });
     identifyCard(crop.dataUrl, contextRef.current, settingsRef.current)
       .then(({ identity, estimate, error: identificationError }) => {
+        logDiagnostic(identificationError ? "Card identification timed out" : "Card identification response received", {
+          provider: provider.provider,
+          confidence: Math.round(identity.confidence * 100),
+          hasPlayer: Boolean(identity.player),
+          hasYear: Boolean(identity.year),
+          hasSet: Boolean(identity.set),
+          hasEstimate: Boolean(estimate),
+          error: identificationError ?? ""
+        });
         if (!isCurrentScan(track.id, signature, requestId)) return;
         if (identificationError) {
           markTrack(track.id, {
@@ -478,10 +613,12 @@ function App(): JSX.Element {
       })
       .catch((caught) => {
         if (!isCurrentScan(track.id, signature, requestId)) return;
+        const message = caught instanceof Error ? caught.message : "Unknown error";
+        logDiagnostic("Card identification request failed", { provider: provider.provider, error: message });
         markTrack(track.id, {
           inFlight: false,
           stage: "error",
-          label: caught instanceof Error ? `AI error: ${caught.message}` : "AI error"
+          label: `AI error: ${message}`
         });
       });
 
@@ -557,6 +694,7 @@ function App(): JSX.Element {
       priceLookup: priceLookupState("free-comps-pending", "Fetching eBay sold comps.")
     });
     const result = await lookupFreeComps(identity, compLinks);
+    logDiagnostic("Free comps lookup completed", { status: result.status, count: result.comps.length, identityConfidence: Math.round(identity.confidence * 100), message: result.message });
     if (signature && !isCurrentScan(trackId, signature, requestId)) return;
 
     const valuation = result.comps.length ? valuationFromFreeComps(identity, result.comps) : tracksRef.current.find((candidate) => candidate.id === trackId)?.valuation;
@@ -770,9 +908,14 @@ function App(): JSX.Element {
           <p className="eyebrow">Whatnot sudden-death POC</p>
           <h1>CardSync</h1>
         </div>
-        <button className="iconButton" type="button" title="Settings" onClick={() => setSettingsOpen((open) => !open)}>
-          <Settings size={18} />
-        </button>
+        <div className="topbarActions">
+          <button className={`iconButton ${diagnosticsOpen ? "selected" : ""}`} type="button" title="Diagnostics" aria-label="Diagnostics" onClick={() => setDiagnosticsOpen((open) => !open)}>
+            <FileText size={17} />
+          </button>
+          <button className="iconButton" type="button" title="Settings" aria-label="Settings" onClick={() => setSettingsOpen((open) => !open)}>
+            <Settings size={18} />
+          </button>
+        </div>
       </header>
 
       <section className="controlBand">
@@ -794,6 +937,7 @@ function App(): JSX.Element {
       ) : null}
 
       {settingsOpen ? <SettingsPanel settings={settings} onChange={persistSettings} /> : null}
+      {diagnosticsOpen ? <DiagnosticsPanel entries={diagnostics} copied={diagnosticsCopied} onCopy={copyDiagnosticLog} onDownload={downloadDiagnosticLog} onClear={clearDiagnostics} /> : null}
 
       <section className="hudGrid">
         <Metric label="Tracked" value={tracks.length.toString()} />
@@ -914,6 +1058,14 @@ function isPageContext(value: unknown): value is PageContext {
   );
 }
 
+function safeHost(baseUrl: string): string {
+  try {
+    return new URL(baseUrl).host;
+  } catch {
+    return baseUrl ? "invalid-endpoint" : "(empty)";
+  }
+}
+
 function Metric({ label, value }: { label: string; value: string }): JSX.Element {
   return (
     <div className="metric">
@@ -1028,6 +1180,54 @@ function HistoryPanel({ items, onClear }: { items: ScanHistoryItem[]; onClear: (
       ) : (
         <p className="empty">No saved scans for this show yet.</p>
       )}
+    </section>
+  );
+}
+
+function DiagnosticsPanel({
+  entries,
+  copied,
+  onCopy,
+  onDownload,
+  onClear
+}: {
+  entries: DiagnosticEntry[];
+  copied: boolean;
+  onCopy: () => void;
+  onDownload: () => void;
+  onClear: () => Promise<void>;
+}): JSX.Element {
+  return (
+    <section className="diagnosticsPanel">
+      <div className="sectionHeader">
+        <div>
+          <h2>Diagnostics</h2>
+          <p>{entries.length} recent local events · keys and images are excluded</p>
+        </div>
+        <div className="diagnosticsActions">
+          <button className="iconButton" type="button" title="Copy diagnostics" aria-label="Copy diagnostics" onClick={onCopy} disabled={!entries.length}>
+            <Copy size={15} />
+          </button>
+          <button className="iconButton" type="button" title="Download diagnostics" aria-label="Download diagnostics" onClick={onDownload} disabled={!entries.length}>
+            <Download size={15} />
+          </button>
+          <button className="iconButton" type="button" title="Clear diagnostics" aria-label="Clear diagnostics" onClick={() => onClear().catch(() => undefined)} disabled={!entries.length}>
+            <Trash2 size={15} />
+          </button>
+        </div>
+      </div>
+      {copied ? <small className="diagnosticsCopied">Copied. The log contains no API key or image data.</small> : null}
+      {entries.length ? (
+        <ol className="diagnosticsList">
+          {[...entries].reverse().slice(0, 40).map((entry, index) => (
+            <li key={`${entry.timestamp}-${entry.event}-${index}`}>
+              <time dateTime={new Date(entry.timestamp).toISOString()}>{formatHistoryTime(entry.timestamp)}</time>
+              <strong>{entry.event}</strong>
+              {entry.details && Object.keys(entry.details).length ? <code>{JSON.stringify(entry.details)}</code> : null}
+            </li>
+          ))}
+        </ol>
+      ) : <p className="empty">No diagnostics recorded yet. Start scanning to capture the pipeline steps.</p>}
     </section>
   );
 }

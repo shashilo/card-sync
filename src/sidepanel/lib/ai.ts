@@ -95,7 +95,7 @@ async function identifyWithOpenAiCompatible(
   });
 
   if (!response.ok) {
-    throw new Error(`${providerLabel(provider)} returned ${response.status}`);
+    throw new Error(await providerResponseError(response, provider));
   }
 
   const payload = (await response.json()) as {
@@ -148,7 +148,7 @@ async function identifyWithAnthropic(
   });
 
   if (!response.ok) {
-    throw new Error(`${providerLabel(provider)} returned ${response.status}`);
+    throw new Error(await providerResponseError(response, provider));
   }
 
   const payload = (await response.json()) as {
@@ -225,6 +225,27 @@ function providerLabel(provider: ProviderSettings): string {
   if (provider.provider === "anthropic") return "Anthropic";
   if (provider.provider === "custom-openai-compatible") return "Custom provider";
   return "AI provider";
+}
+
+async function providerResponseError(response: Response, provider: ProviderSettings): Promise<string> {
+  let detail = "";
+  try {
+    const payload = (await response.json()) as { error?: { message?: unknown } | string; message?: unknown };
+    const value = typeof payload.error === "object" && payload.error !== null
+      ? payload.error.message
+      : typeof payload.error === "string"
+        ? payload.error
+        : payload.message;
+    if (typeof value === "string") {
+      detail = value
+        .replace(/Bearer\s+[^\s,;]+/gi, "Bearer [redacted]")
+        .replace(/\b(?:sk-or-v1-|sk-proj-|sk-ant-|sk-)\S+/gi, "[redacted key]")
+        .slice(0, 240);
+    }
+  } catch {
+    // Keep the HTTP status even if the provider returns an unreadable error body.
+  }
+  return `${providerLabel(provider)} returned ${response.status}${detail ? `: ${detail}` : ""}`;
 }
 
 function timeoutForMode(mode: IdentifyMode): number {

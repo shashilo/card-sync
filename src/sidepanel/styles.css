@@ -42,6 +42,18 @@ select {
   gap: 12px;
 }
 
+.topbarActions,
+.diagnosticsActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.iconButton.selected {
+  background: #334155;
+  color: #bfdbfe;
+}
+
 .eyebrow {
   margin: 0 0 3px;
   color: #9ca3af;
@@ -158,6 +170,7 @@ h3 {
 }
 
 .settingsPanel,
+.diagnosticsPanel,
 .trackList,
 .historyPanel,
 .detailPanel,
@@ -168,6 +181,7 @@ h3 {
 }
 
 .settingsPanel,
+.diagnosticsPanel,
 .trackList,
 .historyPanel,
 .detailPanel {
@@ -218,6 +232,63 @@ h3 {
 .settingsPanel .checkRow input {
   width: 16px;
   min-height: 16px;
+}
+
+.diagnosticsPanel .sectionHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.diagnosticsPanel .sectionHeader p {
+  margin-top: 3px;
+  color: #94a3b8;
+  font-size: 10px;
+}
+
+.diagnosticsActions .iconButton {
+  width: 29px;
+  height: 29px;
+}
+
+.diagnosticsList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 360px;
+  overflow: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.diagnosticsList li {
+  display: grid;
+  gap: 3px;
+  border-left: 2px solid #475569;
+  padding: 2px 0 2px 8px;
+}
+
+.diagnosticsList time {
+  color: #94a3b8;
+  font-size: 10px;
+}
+
+.diagnosticsList strong {
+  font-size: 11px;
+}
+
+.diagnosticsList code {
+  overflow-wrap: anywhere;
+  color: #cbd5e1;
+  font: 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap;
+}
+
+.diagnosticsCopied {
+  color: #bbf7d0;
+  font-size: 11px;
 }
 
 .hudGrid {
