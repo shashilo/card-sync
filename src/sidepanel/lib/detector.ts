@@ -191,6 +191,7 @@ export function detectCardBoxes(
   const brightnessIntegral = buildIntegral(brightness, analysisWidth, analysisHeight);
   const viewportWidth = viewport?.viewportWidth || frameWidth;
   const viewportHeight = viewport?.viewportHeight || frameHeight;
+  const displayRect = viewport?.videoRect ?? { x: 0, y: 0, width: viewportWidth, height: viewportHeight };
 
   const candidates: DetectionBox[] = [];
   const { searchBounds, minHeight, maxHeight, aspectRatios } = buildDetectionScanPlan(
@@ -235,9 +236,13 @@ export function detectCardBoxes(
           if (score < 0.22) continue;
 
           const expanded = expandBox({ x, y, width: w, height: h }, searchBounds);
+          const mapped = frameToViewportBox(expanded, analysisWidth, analysisHeight, displayRect.width, displayRect.height);
 
           candidates.push({
-            ...frameToViewportBox(expanded, analysisWidth, analysisHeight, viewportWidth, viewportHeight),
+            x: displayRect.x + mapped.x,
+            y: displayRect.y + mapped.y,
+            width: mapped.width,
+            height: mapped.height,
             confidence: clamp(score, 0, 0.96)
           });
         }
